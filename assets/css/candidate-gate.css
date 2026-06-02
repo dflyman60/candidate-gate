@@ -369,6 +369,20 @@ textarea {
   color: #854d0e;
 }
 
+.conf-relevant {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.snippet-dedup {
+  font-size: 0.82rem;
+  margin-top: 6px;
+}
+
+.coverage-item.conf-relevant {
+  border-left-color: #6366f1;
+}
+
 .conf-low {
   background: #ffedd5;
   color: #9a3412;

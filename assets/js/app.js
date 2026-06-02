@@ -363,7 +363,7 @@ function renderScorecard(req, sc) {
   badge.textContent = rec;
   badge.className = `rec-badge rec-${recClass(rec)}`;
 
-  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2.6`;
+  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2.7`;
 
   renderMirroring(sc.mirroring);
   renderCoverage("#must-coverage", sc.mustHaveCoverage, true);
@@ -484,7 +484,8 @@ function renderCoverage(sel, coverage, showSubstantiated) {
   const mirrorNote = coverage.mirrored
     ? ` · <strong>${coverage.mirrored}</strong> likely JD-mirrored`
     : "";
-  const summary = `<p><strong>${coverage.percent}%</strong> evidence + legitimacy weighted${sub}${mirrorNote} · ${coverage.high} high · ${coverage.medium} medium · ${coverage.low} keyword-only</p>`;
+  const rel = coverage.relevant ? ` · ${coverage.relevant} role-related` : "";
+  const summary = `<p><strong>${coverage.percent}%</strong> evidence + legitimacy weighted${sub}${mirrorNote} · ${coverage.high} substantiated${rel} · ${coverage.medium} partial · ${coverage.low} keyword-only</p>`;
   const items = (coverage.items || []).map((item) => renderCriterionRow(item)).join("");
   el.innerHTML = bar + summary + `<div class="coverage-items">${items}</div>`;
 }
@@ -492,12 +493,22 @@ function renderCoverage(sel, coverage, showSubstantiated) {
 function renderCriterionRow(item) {
   const conf = item.confidence || (item.matched ? "low" : "none");
   const leg = item.legitimacy;
-      const evidenceBlock = item.snippet
-        ? `<div class="evidence-block">
+  const showQuote = item.snippet && (item.snippetGroupSize <= 1 || item.snippetGroupRank === 1);
+  const dupNote =
+    item.snippet && item.snippetGroupSize > 1
+      ? item.snippetGroupRank > 1
+        ? `<p class="snippet-dedup muted">Same resume bullet also matched ${item.snippetGroupSize - 1} other requirement(s) — quote shown on the first match above.</p>`
+        : `<p class="snippet-dedup muted">This experience bullet also loosely matched <strong>${item.snippetGroupSize - 1}</strong> other requirement(s) below (role fit, not duty proof).</p>`
+      : "";
+  const evidenceBlock = item.snippet
+    ? showQuote
+      ? `<div class="evidence-block">
             <p class="evidence-label">${item.incidentalSnippet ? "Closest incidental text (requirement not stated)" : "Resume evidence for this rating"}${item.sectionLabel ? ` · ${escapeHtml(item.sectionLabel)}` : ""}:</p>
             <p class="snippet">“${escapeHtml(item.snippet.slice(0, 220))}${item.snippet.length > 220 ? "…" : ""}”</p>
+            ${dupNote}
           </div>`
-        : `<p class="evidence-label muted">No resume excerpt matched this requirement.</p>`;
+      : `<div class="evidence-block">${dupNote}</div>`
+    : `<p class="evidence-label muted">No resume excerpt matched this requirement.</p>`;
 
   const legBlock = leg
     ? `<div class="legitimacy-block">

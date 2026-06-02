@@ -4,18 +4,16 @@ import {
   runConsistencyChecks,
   confidenceWeight,
   isBoilerplateCriterion,
+  normalizeSnippetKey,
+  annotateSnippetGroups,
 } from "./evidence.js";
 import { analyzeJdMirroring, mirroringPenalty } from "./mirroring.js";
 import { legitimacyWeight } from "./legitimacy.js";
 
 export function scoreCandidate(resumeText, requisition, domainPack) {
   const jdRaw = requisition.jdRaw || "";
-  const mustResults = requisition.mustHaves.map((c) =>
-    assessCriterionEvidence(resumeText, c.text, domainPack, jdRaw)
-  );
-  const prefResults = requisition.preferred.map((c) =>
-    assessCriterionEvidence(resumeText, c.text, domainPack, jdRaw)
-  );
+  const mustResults = assessCriteriaBatch(resumeText, requisition.mustHaves, domainPack, jdRaw);
+  const prefResults = assessCriteriaBatch(resumeText, requisition.preferred, domainPack, jdRaw);
   const dealResults = requisition.dealBreakers.map((c) =>
     assessDealBreaker(resumeText, c.text, domainPack, mustResults)
   );
@@ -59,7 +57,7 @@ export function scoreCandidate(resumeText, requisition, domainPack) {
   return {
     overall,
     recommendation,
-    scoringVersion: "2.6",
+    scoringVersion: "2.7",
     mustHaveCoverage: coverageSummary(mustResults, mustWeighted),
     preferredCoverage: coverageSummary(prefResults, prefWeighted),
     dealBreakerRisks: dealResults.filter((r) => r.risk),
@@ -88,8 +86,21 @@ function blendedCriterionWeight(r) {
   return cw;
 }
 
+function assessCriteriaBatch(resumeText, items, domainPack, jdRaw) {
+  const used = new Set();
+  const results = (items || []).map((c) => {
+    const text = typeof c === "string" ? c : c.text;
+    const r = assessCriterionEvidence(resumeText, text, domainPack, jdRaw, used);
+    if (r.snippet) used.add(normalizeSnippetKey(r.snippet));
+    return r;
+  });
+  annotateSnippetGroups(results);
+  return results;
+}
+
 function coverageSummary(results, weighted) {
   const high = results.filter((r) => r.confidence === "high").length;
+  const relevant = results.filter((r) => r.confidence === "relevant").length;
   const medium = results.filter((r) => r.confidence === "medium").length;
   const low = results.filter((r) => r.confidence === "low").length;
   const matched = results.filter((r) => r.matched).length;
@@ -101,6 +112,7 @@ function coverageSummary(results, weighted) {
     percent: Math.round(weighted * 100),
     substantiatedPercent: results.length ? Math.round((supported / results.length) * 100) : 0,
     high,
+    relevant,
     medium,
     low,
     supported,
@@ -167,6 +179,7 @@ function buildScreenKit(mustResults, prefResults, mirroring) {
     ...mustResults.filter((r) => r.legitimacy?.tier === "self-reported"),
     ...mustResults.filter((r) => r.confidence === "none"),
     ...mustResults.filter((r) => r.confidence === "low" && r.legitimacy?.tier !== "likely-mirrored"),
+    ...mustResults.filter((r) => r.confidence === "relevant"),
     ...mustResults.filter((r) => r.confidence === "medium"),
     ...prefResults.filter((r) => r.legitimacy?.tier === "likely-mirrored" || r.confidence === "none" || r.confidence === "low"),
   ];
@@ -200,7 +213,9 @@ function assessDealBreaker(resumeText, breakerText, domainPack, mustResults) {
   const resume = resumeText.toLowerCase();
 
   if (/no\s+.+(?:experience|software|scheduling)/i.test(breakerText)) {
-    const weakMust = mustResults.filter((r) => r.confidence === "none" || r.confidence === "low").length;
+    const weakMust = mustResults.filter(
+      (r) => r.confidence === "none" || r.confidence === "low" || r.confidence === "relevant"
+    ).length;
     if (weakMust >= Math.max(2, Math.floor(mustResults.length * 0.5))) {
       return { text: breakerText, risk: true, reason: "Multiple must-haves lack substantiated evidence" };
     }

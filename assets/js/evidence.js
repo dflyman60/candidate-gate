@@ -27,6 +27,13 @@ const WEAK_MATCH_TOKENS = new Set([
   "assigned", "general", "additional", "various", "flexible", "team", "work",
 ]);
 
+const GENERIC_RESUME_TOKENS = new Set([
+  "scheduler", "scheduling", "project", "experience", "construction", "epc", "baseline",
+  "schedule", "schedules", "engineer", "engineering", "controls", "planning", "managed",
+  "responsible", "developed", "years", "energy", "power", "next", "era", "renewable",
+  "solar", "wind", "utility", "capital", "portfolio", "team", "lead", "led",
+]);
+
 export function splitResumeSegments(resumeText) {
   const lines = resumeText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const segments = [];
@@ -56,7 +63,31 @@ export function splitResumeSegments(resumeText) {
   return { segments, summaryEnd };
 }
 
-export function findBestSnippet(resumeText, criterionText, domainPack) {
+export function normalizeSnippetKey(snippet) {
+  if (!snippet) return "";
+  return snippet.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 160);
+}
+
+/** Mark shared excerpts so the UI can collapse duplicate quotes. */
+export function annotateSnippetGroups(results) {
+  const counts = new Map();
+  const rankByKey = new Map();
+  for (const r of results) {
+    if (!r.snippet) continue;
+    const key = normalizeSnippetKey(r.snippet);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  for (const r of results) {
+    if (!r.snippet) continue;
+    const key = normalizeSnippetKey(r.snippet);
+    r.snippetGroupSize = counts.get(key) || 1;
+    const rank = (rankByKey.get(key) || 0) + 1;
+    rankByKey.set(key, rank);
+    r.snippetGroupRank = rank;
+  }
+}
+
+export function findBestSnippet(resumeText, criterionText, domainPack, usedSnippetKeys = null) {
   const keywords = expandSearchTerms(criterionText, domainPack);
   const sentences = extractSentences(resumeText);
   const candidates = [];
@@ -103,6 +134,7 @@ export function findBestSnippet(resumeText, criterionText, domainPack) {
   if (!pool.length) return null;
 
   const sortFn = (a, b) =>
+    rankCandidate(criterionText, b, usedSnippetKeys) - rankCandidate(criterionText, a, usedSnippetKeys) ||
     b.overlap - a.overlap ||
     (b.phrase ? 1 : 0) - (a.phrase ? 1 : 0) ||
     b.signals.length - a.signals.length ||
@@ -201,8 +233,14 @@ function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function assessCriterionEvidence(resumeText, criterionText, domainPack, jdRaw = "") {
-  const snippetResult = findBestSnippet(resumeText, criterionText, domainPack);
+export function assessCriterionEvidence(
+  resumeText,
+  criterionText,
+  domainPack,
+  jdRaw = "",
+  usedSnippetKeys = null
+) {
+  const snippetResult = findBestSnippet(resumeText, criterionText, domainPack, usedSnippetKeys);
   if (!snippetResult) {
     const legitimacy = analyzeLegitimacy(criterionText, null, null, [], jdRaw, domainPack);
     return {
@@ -218,22 +256,31 @@ export function assessCriterionEvidence(resumeText, criterionText, domainPack, j
     };
   }
 
-  const { snippet, section, signals, matchedTokens, phrase } = snippetResult;
-  const confidence = scoreConfidence(section, signals, snippet);
-  const matched = confidence !== "none";
+  const { snippet, section, signals, matchedTokens, phrase, overlap } = snippetResult;
+  const overlapVal = overlap ?? meaningfulOverlap(criterionText, snippet);
+  const rawConfidence = scoreConfidence(section, signals, snippet, overlapVal, phrase, matchedTokens);
   const legitimacy = analyzeLegitimacy(criterionText, snippet, section, signals, jdRaw, domainPack);
   const phraseOnResume = phrase || phraseOverlapInSnippet(criterionText, snippet);
   const headerOnlyRejected = isDisallowedEvidenceBlock(snippet, section);
   const notStatedOnResume =
     legitimacy.tier === "not-on-resume" || headerOnlyRejected || section === "header";
+  const finalized = notStatedOnResume
+    ? { confidence: "none", confidenceLabel: "Not stated on resume", matched: false }
+    : finalizeConfidence(rawConfidence, criterionText, {
+        snippet,
+        section,
+        signals,
+        overlap: overlapVal,
+        phrase: phraseOnResume,
+        matchedTokens,
+      }, legitimacy);
 
   return {
     text: criterionText,
-    matched: notStatedOnResume ? false : matched,
-    confidence: notStatedOnResume ? "none" : confidence,
-    confidenceLabel: notStatedOnResume
-      ? "Not stated on resume"
-      : confidenceLabel(confidence, section, snippet),
+    matched: notStatedOnResume ? false : finalized.matched,
+    confidence: notStatedOnResume ? "none" : finalized.confidence,
+    confidenceLabel: notStatedOnResume ? "Not stated on resume" : finalized.confidenceLabel,
+    criterionOverlap: overlapVal,
     snippet: notStatedOnResume ? null : snippet,
     incidentalSnippet: false,
     section,
@@ -250,9 +297,77 @@ export function assessCriterionEvidence(resumeText, criterionText, domainPack, j
   };
 }
 
-function scoreConfidence(section, signals, snippet) {
+function rankCandidate(criterionText, candidate, usedSnippetKeys) {
+  const spec = criterionSpecificScore(criterionText, candidate);
+  const key = normalizeSnippetKey(candidate.snippet);
+  const usedPenalty = usedSnippetKeys?.has(key) ? -0.45 : 0;
+  return spec + usedPenalty;
+}
+
+function criterionSpecificScore(criterionText, candidate) {
+  const { matchedTokens, overlap, phrase } = candidate;
+  if (phrase) return 0.88 + Math.min(0.12, phrase.length / 100);
+  const strongHits = (matchedTokens || []).filter(
+    (t) => !WEAK_MATCH_TOKENS.has(t) && !GENERIC_RESUME_TOKENS.has(t)
+  );
+  const genericOnly =
+    (matchedTokens || []).length > 0 && strongHits.length === 0;
+  let score = overlap ?? meaningfulOverlap(criterionText, candidate.snippet);
+  if (genericOnly) score *= 0.25;
+  else if (strongHits.length >= 2) score += 0.18;
+  return score;
+}
+
+function finalizeConfidence(raw, criterionText, ctx, legitimacy) {
+  const { snippet, section, signals, overlap, phrase, matchedTokens } = ctx;
+  const echo = legitimacy.jdEchoPercent ?? 0;
+  const tier = legitimacy.tier;
+  const intent = legitimacy.intent || [];
+  const reqMissing = intent.filter((i) => i.id.startsWith("req-") && i.status === "missing");
+
+  const toRelevant = () => ({
+    confidence: "relevant",
+    confidenceLabel: "Relevant role — verify duty",
+    matched: true,
+  });
+
+  if (tier === "likely-mirrored" || echo >= 55) return toRelevant();
+  if (reqMissing.length > 0) return toRelevant();
+  if (!phrase && overlap < 0.28) return toRelevant();
+
+  if (raw === "high") {
+    const hasStrong = signals.some((s) =>
+      ["employer", "dates", "deliverable", "project context", "metrics"].includes(s)
+    );
+    const strongHits = (matchedTokens || []).filter(
+      (t) => !WEAK_MATCH_TOKENS.has(t) && !GENERIC_RESUME_TOKENS.has(t)
+    );
+    if (!phrase && overlap < 0.42) return toRelevant();
+    if (echo >= 40) return toRelevant();
+    if (!hasStrong && !phrase) return toRelevant();
+    if (strongHits.length === 0 && !phrase) return toRelevant();
+    return {
+      confidence: "high",
+      confidenceLabel: confidenceLabel("high", section, snippet),
+      matched: true,
+    };
+  }
+
+  if (raw === "medium" && (echo >= 45 || (!phrase && overlap < 0.32))) return toRelevant();
+
+  return {
+    confidence: raw,
+    confidenceLabel: confidenceLabel(raw, section, snippet),
+    matched: raw !== "none",
+  };
+}
+
+function scoreConfidence(section, signals, snippet, overlap = 0, phrase = null, matchedTokens = []) {
   const signalCount = signals.length;
   const headerLike = section === "summary" || section === "header" || isLikelyHeaderBlock(snippet);
+  const strongHits = (matchedTokens || []).filter(
+    (t) => !WEAK_MATCH_TOKENS.has(t) && !GENERIC_RESUME_TOKENS.has(t)
+  );
 
   if (section === "skills") {
     return signalCount > 0 ? "low" : "none";
@@ -266,9 +381,13 @@ function scoreConfidence(section, signals, snippet) {
     const hasStrong = signals.some((s) =>
       ["employer", "dates", "deliverable", "project context", "metrics"].includes(s)
     );
-    if (signalCount >= 2 && hasStrong) return "high";
-    if (signalCount >= 1 && hasStrong) return "medium";
-    if (signalCount >= 1) return "medium";
+    if (phrase || overlap >= 0.45) {
+      if (signalCount >= 2 && hasStrong && strongHits.length >= 1) return "high";
+      if (hasStrong || strongHits.length >= 1) return "medium";
+    }
+    if (signalCount >= 2 && hasStrong && strongHits.length >= 2 && overlap >= 0.38) return "high";
+    if (signalCount >= 1 && hasStrong && strongHits.length >= 1) return "medium";
+    if (signalCount >= 1 || strongHits.length >= 1) return "medium";
     return "low";
   }
 
@@ -425,6 +544,31 @@ export function runConsistencyChecks(resumeText, mustResults, requisition) {
     });
   }
 
+  const snippetReuse = new Map();
+  for (const r of mustResults) {
+    if (!r.snippet) continue;
+    const key = normalizeSnippetKey(r.snippet);
+    snippetReuse.set(key, (snippetReuse.get(key) || 0) + 1);
+  }
+  const maxReuse = Math.max(0, ...snippetReuse.values());
+  if (maxReuse >= 4) {
+    flags.push({
+      severity: "high",
+      title: "One experience bullet reused for many requirements",
+      detail: `The same resume excerpt was used for ${maxReuse} must-haves with loose overlap. Treat as role fit, not duty-specific proof.`,
+    });
+  }
+
+  const relevantOnly = mustResults.filter((r) => r.confidence === "relevant").length;
+  if (mustResults.length >= 4 && relevantOnly >= Math.ceil(mustResults.length * 0.55)) {
+    flags.push({
+      severity: "medium",
+      title: "Most must-haves are role-related only",
+      detail:
+        "Resume shows a shared job block but not duty-specific language for many requirements. Use the screen kit to verify each duty.",
+    });
+  }
+
   const highCount = mustResults.filter((r) => r.confidence === "high").length;
   const lowOnly = mustResults.filter((r) => r.matched && (r.confidence === "low")).length;
   if (mustResults.length && lowOnly === mustResults.filter((r) => r.matched).length && lowOnly >= 3) {
@@ -495,6 +639,7 @@ function confidenceLabel(c, section, snippet) {
   return {
     high: "High — substantiated",
     medium: "Medium — partial context",
+    relevant: "Relevant role — verify duty",
     low: "Low — keyword only",
     none: "Not found",
   }[c] || c;
@@ -568,5 +713,5 @@ function significantTokens(text) {
 }
 
 export function confidenceWeight(confidence) {
-  return { high: 1, medium: 0.55, low: 0.2, none: 0 }[confidence] ?? 0;
+  return { high: 1, medium: 0.55, relevant: 0.28, low: 0.2, none: 0 }[confidence] ?? 0;
 }
