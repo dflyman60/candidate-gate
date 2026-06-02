@@ -435,9 +435,15 @@ textarea {
 }
 
 .leg-not-found,
+.leg-not-on-resume,
 .leg-unknown {
   background: #f1f5f9;
   color: #64748b;
+}
+
+.leg-not-on-resume {
+  background: #e0e7ff;
+  color: #3730a3;
 }
 
 .jd-echo {

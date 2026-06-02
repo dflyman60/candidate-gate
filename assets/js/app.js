@@ -363,7 +363,7 @@ function renderScorecard(req, sc) {
   badge.textContent = rec;
   badge.className = `rec-badge rec-${recClass(rec)}`;
 
-  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2.3`;
+  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2.4`;
 
   renderMirroring(sc.mirroring);
   renderCoverage("#must-coverage", sc.mustHaveCoverage, true);
@@ -502,7 +502,7 @@ function renderCriterionRow(item) {
   const legBlock = leg
     ? `<div class="legitimacy-block">
         <span class="leg-badge leg-${leg.tier}">${escapeHtml(leg.label)}</span>
-        ${leg.jdEchoPercent != null ? `<span class="jd-echo">${leg.jdEchoPercent}% JD echo</span>` : ""}
+        ${leg.jdEchoPercent != null ? `<span class="jd-echo">${leg.jdEchoPercent}% resume echoes requirement</span>` : ""}
         <p class="leg-summary muted">${escapeHtml(leg.summary)}</p>
         ${renderIntentChecklist(leg.intent)}
       </div>`
@@ -542,6 +542,7 @@ function legClass(label) {
   if (label.includes("Self-reported")) return "self-reported";
   if (label.includes("Supported")) return "supported";
   if (label.includes("Partially")) return "partial";
+  if (label.includes("Not stated")) return "not-on-resume";
   return "unknown";
 }
 

@@ -7,7 +7,8 @@ const YEARS_RE = /\b\d{1,2}\+?\s*(?:years?|yrs?)\b/i;
 const METRICS_RE = /\b\d[\d,]*\+?\s*(?:activities|resources|projects|mw|mwh|\$|million|billion|k)\b/i;
 const EMPLOYER_RE = /\b(?:at|for|with)\s+[A-Z][A-Za-z0-9&.,'\- ]{2,40}\b/;
 const PROJECT_RE = /\b(?:epc|data\s*center|nuclear|industrial|construction|refinery|pipeline|power\s*plant|infrastructure)\b/i;
-const DELIVERABLE_RE = /\b(?:baseline|recovery\s*schedule|schedule\s*update|cost\s*report|earned\s*value|wbs|lookahead|critical\s*path)\b/i;
+const DELIVERABLE_RE =
+  /\b(?:baseline|recovery\s*schedule|schedule\s*update|cost\s*report|earned\s*value|wbs|lookahead|critical\s*path|drawing|drawings|blueprint|markup)\b/i;
 
 const SKILLS_SECTION_RE = /^(?:skills|technical\s*skills|competencies|core\s*competencies|tools|software)\s*:?\s*$/i;
 const SUMMARY_SECTION_RE = /^(?:summary|profile|objective|professional\s*summary)\s*:?\s*$/i;
@@ -100,6 +101,9 @@ export function findBestSnippet(resumeText, criterionText, domainPack) {
 
 function passesMatchQuality(criterionText, candidate) {
   const { snippet, score, matchedTokens, overlap, phrase } = candidate;
+  if (requiresDomainAnchor(criterionText) && !domainAnchorInSnippet(criterionText, snippet)) {
+    return false;
+  }
   if (phrase) return true;
   if (overlap >= 0.34) return true;
   if (isBoilerplateCriterion(criterionText)) return false;
@@ -107,6 +111,16 @@ function passesMatchQuality(criterionText, candidate) {
   if (strongHits.length >= 2) return true;
   if (strongHits.length >= 1 && score >= 0.45) return true;
   return score >= 0.5 && strongHits.length >= 1;
+}
+
+function requiresDomainAnchor(criterionText) {
+  return /drawing|blueprint|cad|autocad|interpret.*(?:drawing|engineer)/i.test(criterionText);
+}
+
+function domainAnchorInSnippet(criterionText, snippet) {
+  const lower = (snippet || "").toLowerCase();
+  if (/drawing/i.test(criterionText)) return /\bdrawings?\b|blueprint|cad|autocad|markup/i.test(lower);
+  return true;
 }
 
 export function isBoilerplateCriterion(text) {

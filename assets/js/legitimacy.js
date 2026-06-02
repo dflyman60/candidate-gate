@@ -28,6 +28,20 @@ export function analyzeLegitimacy(criterionText, snippet, section, signals, jdRa
     return { tier, label, summary, jdEchoPercent: 0, intent };
   }
 
+  const resume = snippet.toLowerCase();
+  const anchors = criterionAnchorTokens(criterionText);
+  const anchorOnResume = anchors.length === 0 || anchors.some((a) => resume.includes(a));
+
+  if (anchors.length > 0 && !anchorOnResume) {
+    return {
+      tier: "not-on-resume",
+      label: "Not stated on resume",
+      summary: `The posting requires this, but the matched resume text does not mention ${anchors.slice(0, 3).join(", ")}. Treat as unverified—do not assume drawing/CAD skill from a scheduler summary alone.`,
+      jdEchoPercent: computeResumeEchoPercent(criterionText, snippet),
+      intent,
+    };
+  }
+
   if (jdEchoPercent >= 55 && headerLike) {
     tier = "likely-mirrored";
     label = "Likely mirrored from JD";
@@ -59,6 +73,11 @@ export function analyzeLegitimacy(criterionText, snippet, section, signals, jdRa
 }
 
 export function computeJdEchoPercent(criterionText, snippet, jdRaw) {
+  return computeResumeEchoPercent(criterionText, snippet, jdRaw);
+}
+
+/** How much the resume excerpt actually repeats this requirement (not the JD alone). */
+function computeResumeEchoPercent(criterionText, snippet, jdRaw) {
   if (!snippet) return 0;
 
   const critTokens = significantTokens(criterionText);
@@ -80,8 +99,22 @@ export function computeJdEchoPercent(criterionText, snippet, jdRaw) {
   return Math.round(Math.min(100, tokenOverlap * 65 + phraseHit * 35));
 }
 
+function criterionAnchorTokens(criterionText) {
+  const lower = criterionText.toLowerCase();
+  if (/drawing|blueprint|cad|autocad|markup|interpret.*engineer/i.test(lower)) {
+    const anchors = [];
+    if (/drawing/i.test(lower)) anchors.push("drawing", "drawings");
+    if (/blueprint/i.test(lower)) anchors.push("blueprint");
+    if (/cad|autocad/i.test(lower)) anchors.push("cad", "autocad");
+    if (/interpret/i.test(lower)) anchors.push("interpret");
+    if (/engineer/i.test(lower)) anchors.push("engineering");
+    return [...new Set(anchors)];
+  }
+  return [];
+}
+
 function buildIntentChecklist(criterionText, snippet, signals, domainPack) {
-  const text = `${criterionText} ${snippet || ""}`.toLowerCase();
+  const resume = (snippet || "").toLowerCase();
   const critLower = criterionText.toLowerCase();
   const signalSet = new Set(signals || []);
 
@@ -91,9 +124,9 @@ function buildIntentChecklist(criterionText, snippet, signals, domainPack) {
   const needsActivity = ACTIVITY_RE.test(critLower);
   const needsContext = CONTEXT_RE.test(critLower);
 
-  const toolMet = TOOL_RE.test(text) || hasToolKeyword(text, domainPack);
-  const activityMet = ACTIVITY_RE.test(text);
-  const contextMet = CONTEXT_RE.test(text);
+  const toolMet = TOOL_RE.test(resume) || hasToolKeyword(resume, domainPack);
+  const activityMet = ACTIVITY_RE.test(resume);
+  const contextMet = CONTEXT_RE.test(resume);
 
   const proofItems = [
     { id: "proof-dates", label: "Dates / timeframe", met: signalSet.has("dates") || signalSet.has("tenure") },
@@ -182,6 +215,7 @@ export function legitimacyWeight(tier) {
     partial: 0.55,
     "self-reported": 0.15,
     "likely-mirrored": 0.08,
+    "not-on-resume": 0,
     "not-found": 0,
   }[tier] ?? 0;
 }
