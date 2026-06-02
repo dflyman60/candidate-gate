@@ -89,10 +89,12 @@
     </section>
 
     <!-- Scorecard -->
-    <section id="view-scorecard" class="panel" hidden>
+    <section id="view-scorecard" class="panel scorecard-panel" hidden>
       <div class="view-nav no-print">
         <button type="button" class="secondary" id="btn-back-evaluate">← Evaluate</button>
       </div>
+      <div class="scorecard-layout">
+        <div class="scorecard-main">
       <div id="scorecard-printable">
         <p class="muted" id="score-meta"></p>
         <div class="score-hero">
@@ -106,7 +108,7 @@
           </div>
         </div>
 
-        <p class="score-disclaimer muted" id="score-disclaimer">Evidence must come from experience or job bullets—not contact info, email, or phone blocks. If not stated on resume, use the screen kit. <span class="tip-hint">Click any badge or underlined label (ⓘ) for a definition.</span></p>
+        <p class="score-disclaimer muted" id="score-disclaimer">Evidence must come from experience or job bullets—not contact info, email, or phone blocks. If not stated on resume, use the screen kit. <span class="tip-hint">Click a requirement row — a red ✓ on the resume marks where that evidence starts (full phrase highlight is parked). Click badges (ⓘ) for definitions.</span></p>
 
         <h3>JD mirroring &amp; tailoring risk</h3>
         <div id="mirroring-panel"></div>
@@ -127,6 +129,26 @@
         <p id="screening-question"></p>
         <ol id="screen-kit-list"></ol>
       </div>
+        </div>
+        <aside class="resume-pane no-print" id="resume-pane" aria-label="Resume PDF">
+          <div class="resume-pane-head">
+            <div class="resume-pane-title-row">
+              <h3>Resume</h3>
+              <div class="resume-toolbar no-print">
+                <div class="zoom-controls" aria-label="Resume zoom">
+                  <button type="button" class="secondary zoom-btn" id="btn-resume-zoom-out" title="Zoom out">−</button>
+                  <span class="zoom-label" id="resume-zoom-label">Fit</span>
+                  <button type="button" class="secondary zoom-btn" id="btn-resume-zoom-in" title="Zoom in">+</button>
+                  <button type="button" class="secondary zoom-btn" id="btn-resume-zoom-fit" title="Fit to panel width">Fit</button>
+                </div>
+                <button type="button" class="secondary" id="btn-resume-expand" title="Wider panel (double-click for full-width resume row)">Wider</button>
+              </div>
+            </div>
+            <p class="muted resume-pane-hint" id="resume-pane-meta">Click a requirement — red ✓ marks where that evidence starts on the PDF.</p>
+          </div>
+          <div id="resume-document" class="resume-document pdf-viewer-host" tabindex="0"></div>
+        </aside>
+      </div>
 
       <div class="toolbar no-print">
         <button type="button" class="secondary" id="btn-copy-scorecard">Copy scorecard</button>
@@ -138,6 +160,6 @@
   <script type="application/json" id="cg-embedded-manifest">{"version":1,"defaultPackId":"project-controls","packs":[{"id":"project-controls","title":"Project Controls & Scheduling","description":"Schedulers, planners, cost engineers, project controls","packFile":"domain-packs/project-controls.json"}]}</script>
   <script type="application/json" id="cg-embedded-packs">{"project-controls":{"packId":"project-controls","title":"Project Controls & Scheduling","description":"Schedulers, planners, cost engineers, project controls","seedMustHaves":["Primavera P6 or MS Project scheduling experience","Critical path method (CPM) scheduling","Schedule baseline and progress update experience","Ability to read and interpret construction/engineering drawings at a coordination level"],"seedPreferred":["Earned value management (EVM / EVMS)","MSP (Microsoft Project Server) or portfolio scheduling","Cost engineering or cost reporting support","EPC, data center, nuclear, or industrial project background","Recovery schedule development","Delay analysis or time impact analysis exposure"],"seedDealBreakers":["No scheduling software experience (P6, MSP, or MS Project)","Unable to meet on-site or client location requirements if stated in JD","No verifiable project scheduling or controls role history"],"keywordHints":{"must":["primavera","p6","ms project","microsoft project","cpm","critical path","scheduler","scheduling","baseline","update schedule","project controls","cost engineer","cost engineering"],"preferred":["evms","evm","earned value","msp","recovery schedule","delay analysis","tia","epc","data center","nuclear","wbs","resource loading","lookahead","4d","5d"],"dealBreaker":["no experience","without","disqualif","must not","unable to"]},"jdSectionLabels":{"must":["required","requirements","must have","must-have","minimum qualifications","minimum requirements","qualifications","essential","mandatory"],"preferred":["preferred","nice to have","nice-to-have","desired","pluses","bonus","ideal"],"dealBreaker":["deal breaker","deal-breaker","disqualif","will not consider","not eligible"]}}}</script>
 
-  <script type="module" src="assets/js/app.js?v=ae83659"></script>
+  <script type="module" src="assets/js/app.js?v=marker3"></script>
 </body>
 </html>

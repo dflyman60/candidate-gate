@@ -193,6 +193,7 @@ function buildScreenKit(mustResults, prefResults, mirroring) {
     sectionLabel: r.sectionLabel,
     matchedTokens: r.matchedTokens,
     phraseOnResume: r.phraseOnResume,
+    text: r.text,
     notOnResume: !r.snippet || (isBoilerplateCriterion(r.text) && !r.phraseOnResume),
   }));
 

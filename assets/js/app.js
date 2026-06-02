@@ -16,6 +16,7 @@ import {
   resolveLegitimacyTipKey,
   getTipDefinition,
 } from "./label-definitions.js";
+import { createPdfViewer } from "./resume-pdf-viewer.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -28,6 +29,9 @@ let editorDraft = null;
 let evaluateReqId = null;
 let lastScorecard = null;
 let resumeTextCache = "";
+let resumePdfBuffer = null;
+let resumeFileName = "";
+let pdfViewerInstance = null;
 
 const views = {
   library: $("#view-library"),
@@ -67,6 +71,8 @@ function bindGlobal() {
   $("#btn-copy-scorecard")?.addEventListener("click", copyScorecard);
   $("#btn-print-scorecard")?.addEventListener("click", () => window.print());
   bindLabelTooltips();
+  bindResumeWalkthrough();
+  bindResumeZoomControls();
 }
 
 function showView(name) {
@@ -299,6 +305,10 @@ function openEvaluate(preselectedId) {
 
 function resetDropZone() {
   resumeTextCache = "";
+  resumePdfBuffer = null;
+  resumeFileName = "";
+  pdfViewerInstance?.destroy?.();
+  pdfViewerInstance = null;
   lastScorecard = null;
   const preview = $("#resume-preview");
   if (preview) preview.textContent = "";
@@ -339,6 +349,10 @@ async function handleResumeFile(file) {
   const status = $("#drop-status");
   if (status) status.textContent = "Reading PDF…";
   try {
+    resumeFileName = file.name;
+    resumePdfBuffer = await file.arrayBuffer();
+    pdfViewerInstance?.destroy?.();
+    pdfViewerInstance = null;
     resumeTextCache = await extractTextFromPdf(file);
     if (status) status.textContent = `${file.name} · ${resumeTextCache.length.toLocaleString()} characters extracted`;
     const preview = $("#resume-preview");
@@ -361,8 +375,8 @@ async function runScore() {
   }
   const pack = await loadDomainPack(req.domainPackId || manifest.defaultPackId);
   lastScorecard = scoreCandidate(resumeTextCache, req, pack);
-  renderScorecard(req, lastScorecard);
   showView("scorecard");
+  renderScorecard(req, lastScorecard);
 }
 
 function renderScorecard(req, sc) {
@@ -381,6 +395,10 @@ function renderScorecard(req, sc) {
   renderCoverage("#must-coverage", sc.mustHaveCoverage, true);
   renderCoverage("#pref-coverage", sc.preferredCoverage, false);
   renderFlags(sc);
+  pdfViewerInstance?.destroy?.();
+  pdfViewerInstance = null;
+  requestAnimationFrame(() => void renderResumePane(null));
+  clearEvidenceWalkthroughSelection();
 
   const claims = $("#claim-summary");
   if (claims) {
@@ -396,7 +414,7 @@ function renderScorecard(req, sc) {
     kitList.innerHTML = sc.screenKit.questions
       .map(
         (q) => `
-      <li class="screen-kit-item">
+      <li class="screen-kit-item${evidenceWalkthroughClass(q)}"${evidenceWalkthroughAttrs(q)}>
         ${renderTipBadge(
           confidenceDisplayLabel(q.confidence),
           resolveConfidenceTipKey(q.confidence),
@@ -576,7 +594,7 @@ function renderCriterionRow(item) {
     : "";
 
   return `
-    <div class="coverage-item conf-${conf}">
+    <div class="coverage-item conf-${conf}${evidenceWalkthroughClass(item)}"${evidenceWalkthroughAttrs(item)}>
       <div class="coverage-badges">
         ${renderTipBadge(
           item.confidenceLabel || confidenceDisplayLabel(conf),
@@ -630,6 +648,159 @@ function copyScorecard() {
     () => alert("Scorecard copied to clipboard."),
     () => alert("Copy failed — select and copy manually.")
   );
+}
+
+function evidenceWalkthroughAttrs(item) {
+  if (!item.snippet) return "";
+  const label = escapeAttr((item.text || item.criterion || "").slice(0, 120));
+  const snip = escapeAttr(item.snippet.slice(0, 900).replace(/\s+/g, " "));
+  return ` data-evidence-snippet="${snip}" data-evidence-label="${label}" tabindex="0" role="button" title="Show red marker where this evidence starts on the PDF"`;
+}
+
+function evidenceWalkthroughClass(item) {
+  return item.snippet ? " evidence-walkthrough-target" : "";
+}
+
+function evidenceHighlightTargetFromRow(el) {
+  let snippet = el.dataset.evidenceSnippet || "";
+  if (!snippet) {
+    const sn = el.querySelector(".snippet");
+    snippet = sn
+      ? sn.textContent.replace(/^[“"]|[”"]\s*$/g, "").replace(/…\s*$/g, "").trim()
+      : "";
+  }
+  if (!snippet) return null;
+  return {
+    snippet,
+    label: el.dataset.evidenceLabel || "Evidence",
+  };
+}
+
+async function renderResumePane(highlight) {
+  const doc = $("#resume-document");
+  const meta = $("#resume-pane-meta");
+  if (!doc) return;
+
+  if (!resumePdfBuffer) {
+    doc.innerHTML = `<p class="muted">No resume PDF loaded.</p>`;
+    return;
+  }
+
+  try {
+    if (!pdfViewerInstance) {
+      doc.innerHTML = `<p class="muted">Loading resume…</p>`;
+      pdfViewerInstance = await createPdfViewer(doc, resumePdfBuffer);
+      updateResumeZoomLabel();
+    }
+
+    if (!highlight?.snippet) {
+      pdfViewerInstance.clearHighlights();
+      if (meta) {
+        meta.textContent = resumeFileName
+          ? `${resumeFileName} — click a requirement for a red ✓ at evidence start on the PDF.`
+          : "Click a requirement — red ✓ marks where that evidence starts on the PDF.";
+      }
+      return;
+    }
+
+    const ok = await pdfViewerInstance.highlight({ ...highlight, resumeText: resumeTextCache });
+    if (meta) {
+        meta.textContent = ok
+          ? `Red ✓ marks evidence start on PDF: ${highlight.label || "match"}`
+          : "Could not locate this evidence on the PDF text layer.";
+    }
+  } catch (err) {
+    pdfViewerInstance = null;
+    doc.innerHTML = `<p class="muted">Could not display PDF: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function clearEvidenceWalkthroughSelection() {
+  document.querySelectorAll(".evidence-walkthrough-active").forEach((el) => {
+    el.classList.remove("evidence-walkthrough-active");
+  });
+}
+
+function activateEvidenceWalkthrough(el) {
+  const target = evidenceHighlightTargetFromRow(el);
+  if (!target) return;
+
+  clearEvidenceWalkthroughSelection();
+  el.classList.add("evidence-walkthrough-active");
+  void renderResumePane(target);
+}
+
+function updateResumeZoomLabel() {
+  const label = $("#resume-zoom-label");
+  if (label && pdfViewerInstance) label.textContent = pdfViewerInstance.getZoomLabel();
+}
+
+function bindResumeZoomControls() {
+  const layout = $(".scorecard-layout");
+
+  $("#btn-resume-zoom-in")?.addEventListener("click", async () => {
+    if (!pdfViewerInstance) return;
+    await pdfViewerInstance.zoomIn();
+    updateResumeZoomLabel();
+  });
+  $("#btn-resume-zoom-out")?.addEventListener("click", async () => {
+    if (!pdfViewerInstance) return;
+    await pdfViewerInstance.zoomOut();
+    updateResumeZoomLabel();
+  });
+  $("#btn-resume-zoom-fit")?.addEventListener("click", async () => {
+    if (!pdfViewerInstance) return;
+    await pdfViewerInstance.zoomFit();
+    updateResumeZoomLabel();
+  });
+
+  const expandBtn = $("#btn-resume-expand");
+  expandBtn?.addEventListener("click", () => {
+    if (!layout) return;
+    const wide = layout.classList.toggle("resume-wide");
+    expandBtn.setAttribute("aria-pressed", wide ? "true" : "false");
+    expandBtn.textContent = wide ? "Standard" : "Wider";
+    requestAnimationFrame(() => {
+      if (pdfViewerInstance) {
+        void pdfViewerInstance.rerender().then(() => {
+          updateResumeZoomLabel();
+          if (pdfViewerInstance.activeHighlight) {
+            void pdfViewerInstance.highlight(pdfViewerInstance.activeHighlight);
+          }
+        });
+      }
+    });
+  });
+
+  expandBtn?.addEventListener("dblclick", (e) => {
+    e.preventDefault();
+    if (!layout) return;
+    layout.classList.toggle("resume-expanded");
+    layout.classList.remove("resume-wide");
+    expandBtn.setAttribute("aria-pressed", "false");
+    expandBtn.textContent = "Wider";
+    requestAnimationFrame(() => pdfViewerInstance?.rerender());
+  });
+}
+
+function bindResumeWalkthrough() {
+  const layout = $(".scorecard-layout");
+  if (!layout || layout.dataset.walkthroughBound) return;
+  layout.dataset.walkthroughBound = "1";
+
+  layout.addEventListener("click", (e) => {
+    if (e.target.closest(".tip-trigger")) return;
+    const row = e.target.closest(".evidence-walkthrough-target");
+    if (!row) return;
+    activateEvidenceWalkthrough(row);
+  });
+
+  layout.addEventListener("keydown", (e) => {
+    const row = e.target.closest(".evidence-walkthrough-target");
+    if (!row || (e.key !== "Enter" && e.key !== " ")) return;
+    e.preventDefault();
+    activateEvidenceWalkthrough(row);
+  });
 }
 
 function renderTipBadge(displayText, tipKey, classNames) {

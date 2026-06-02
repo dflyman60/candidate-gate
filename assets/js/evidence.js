@@ -1,6 +1,7 @@
 /** Evidence depth and resume structure analysis. */
 
 import { analyzeLegitimacy } from "./legitimacy.js";
+import { findSnippetRange } from "./resume-highlight.js";
 import {
   requiresTechnicalAnchors,
   resumeMeetsTechnicalAnchors,
@@ -275,6 +276,9 @@ export function assessCriterionEvidence(
         matchedTokens,
       }, legitimacy);
 
+  const range =
+    !notStatedOnResume && snippet ? findSnippetRange(resumeText, snippet) : null;
+
   return {
     text: criterionText,
     matched: notStatedOnResume ? false : finalized.matched,
@@ -282,6 +286,8 @@ export function assessCriterionEvidence(
     confidenceLabel: notStatedOnResume ? "Not stated on resume" : finalized.confidenceLabel,
     criterionOverlap: overlapVal,
     snippet: notStatedOnResume ? null : snippet,
+    snippetStart: range?.start ?? null,
+    snippetEnd: range?.end ?? null,
     incidentalSnippet: false,
     section,
     sectionLabel: sectionLabel(section, snippet),
