@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Candidate Gate</title>
+  <link rel="stylesheet" href="assets/css/candidate-gate.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>Candidate Gate</h1>
+      <p class="tagline">Local-first recruiting validation · MVP</p>
+    </div>
+    <button type="button" class="secondary no-print" id="btn-evaluate-nav">Evaluate resume</button>
+  </header>
+
+  <main class="wrap">
+    <!-- Library -->
+    <section id="view-library" class="panel">
+      <h2>Requisition library</h2>
+      <p class="muted">Create requisitions from job descriptions, then score resumes against saved criteria. Data stays in this browser.</p>
+      <div class="toolbar">
+        <button type="button" class="primary" id="btn-new-requisition">New requisition</button>
+      </div>
+      <p id="library-empty" class="muted" hidden>No requisitions yet. Create one from a job description.</p>
+      <div id="requisition-list"></div>
+    </section>
+
+    <!-- Editor -->
+    <section id="view-editor" class="panel" hidden>
+      <div class="view-nav">
+        <button type="button" class="secondary" id="btn-back-library-editor">← Library</button>
+      </div>
+      <h2 id="editor-title">New requisition</h2>
+      <p class="muted">Domain pack: <strong id="editor-pack-label">—</strong></p>
+
+      <label for="req-title">Requisition title</label>
+      <input type="text" id="req-title" placeholder="e.g. Senior Scheduler – Data Center EPC" />
+
+      <label for="req-jd">Job description (paste full text)</label>
+      <textarea id="req-jd" placeholder="Paste the JD here…"></textarea>
+      <div class="toolbar">
+        <button type="button" class="secondary" id="btn-extract-jd">Extract criteria from JD</button>
+      </div>
+
+      <div class="criteria-section">
+        <h3>Must-haves</h3>
+        <div id="list-must"></div>
+        <button type="button" class="link-btn" onclick="addCriterion('must')">+ Add must-have</button>
+      </div>
+      <div class="criteria-section">
+        <h3>Preferred skills</h3>
+        <div id="list-preferred"></div>
+        <button type="button" class="link-btn" onclick="addCriterion('preferred')">+ Add preferred</button>
+      </div>
+      <div class="criteria-section">
+        <h3>Deal breakers</h3>
+        <div id="list-deal"></div>
+        <button type="button" class="link-btn" onclick="addCriterion('deal')">+ Add deal breaker</button>
+      </div>
+
+      <div class="toolbar">
+        <button type="button" class="primary" id="btn-save-requisition">Save requisition</button>
+      </div>
+    </section>
+
+    <!-- Evaluate -->
+    <section id="view-evaluate" class="panel" hidden>
+      <div class="view-nav">
+        <button type="button" class="secondary" id="btn-back-library">← Library</button>
+      </div>
+      <h2>Evaluate candidate</h2>
+      <p class="muted">Select a requisition and drop a resume PDF to generate a scorecard.</p>
+
+      <label for="evaluate-requisition">Requisition</label>
+      <select id="evaluate-requisition"></select>
+
+      <div id="drop-zone" class="drop-zone" style="margin-top: 20px;">
+        <p id="drop-status">Drop a resume PDF here or click to browse</p>
+        <input type="file" id="resume-file" accept="application/pdf,.pdf" hidden />
+      </div>
+      <p id="resume-preview" class="muted"></p>
+
+      <div class="toolbar">
+        <button type="button" class="primary" id="btn-run-score">Generate scorecard</button>
+      </div>
+    </section>
+
+    <!-- Scorecard -->
+    <section id="view-scorecard" class="panel" hidden>
+      <div class="view-nav no-print">
+        <button type="button" class="secondary" id="btn-back-evaluate">← Evaluate</button>
+      </div>
+      <div id="scorecard-printable">
+        <p class="muted" id="score-meta"></p>
+        <div class="score-hero">
+          <div>
+            <div class="muted">Overall score</div>
+            <div class="score-big" id="score-overall">—</div>
+          </div>
+          <div>
+            <div class="muted">Recommendation</div>
+            <span class="rec-badge" id="score-recommendation">—</span>
+          </div>
+        </div>
+
+        <h3>Must-have coverage</h3>
+        <div id="must-coverage"></div>
+
+        <h3>Preferred coverage</h3>
+        <div id="pref-coverage"></div>
+
+        <h3>Deal-breaker risk flags</h3>
+        <div id="deal-risks"></div>
+
+        <h3>Resume claim summary</h3>
+        <ul id="claim-summary"></ul>
+
+        <h3>Suggested screening question</h3>
+        <p id="screening-question"></p>
+      </div>
+
+      <div class="toolbar no-print">
+        <button type="button" class="secondary" id="btn-copy-scorecard">Copy scorecard</button>
+        <button type="button" class="secondary" id="btn-print-scorecard">Print</button>
+      </div>
+    </section>
+  </main>
+
+  <script type="application/json" id="cg-embedded-manifest">{"version":1,"defaultPackId":"project-controls","packs":[{"id":"project-controls","title":"Project Controls & Scheduling","description":"Schedulers, planners, cost engineers, project controls","packFile":"domain-packs/project-controls.json"}]}</script>
+  <script type="application/json" id="cg-embedded-packs">{"project-controls":{"packId":"project-controls","title":"Project Controls & Scheduling","description":"Schedulers, planners, cost engineers, project controls","seedMustHaves":["Primavera P6 or MS Project scheduling experience","Critical path method (CPM) scheduling","Schedule baseline and progress update experience","Ability to read and interpret construction/engineering drawings at a coordination level"],"seedPreferred":["Earned value management (EVM / EVMS)","MSP (Microsoft Project Server) or portfolio scheduling","Cost engineering or cost reporting support","EPC, data center, nuclear, or industrial project background","Recovery schedule development","Delay analysis or time impact analysis exposure"],"seedDealBreakers":["No scheduling software experience (P6, MSP, or MS Project)","Unable to meet on-site or client location requirements if stated in JD","No verifiable project scheduling or controls role history"],"keywordHints":{"must":["primavera","p6","ms project","microsoft project","cpm","critical path","scheduler","scheduling","baseline","update schedule","project controls","cost engineer","cost engineering"],"preferred":["evms","evm","earned value","msp","recovery schedule","delay analysis","tia","epc","data center","nuclear","wbs","resource loading","lookahead","4d","5d"],"dealBreaker":["no experience","without","disqualif","must not","unable to"]},"jdSectionLabels":{"must":["required","requirements","must have","must-have","minimum qualifications","minimum requirements","qualifications","essential","mandatory"],"preferred":["preferred","nice to have","nice-to-have","desired","pluses","bonus","ideal"],"dealBreaker":["deal breaker","deal-breaker","disqualif","will not consider","not eligible"]}}}</script>
+
+  <script type="module" src="assets/js/app.js"></script>
+</body>
+</html>

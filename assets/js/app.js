@@ -1,0 +1,457 @@
+import { loadManifest, loadDomainPack, criteriaFromPack } from "./domain-packs.js";
+import { extractFromJd, mergeCriteria } from "./jd-extract.js";
+import { extractTextFromPdf } from "./resume-parse.js";
+import { scoreCandidate } from "./score.js";
+import {
+  loadState,
+  saveState,
+  uuid,
+  getRequisition,
+  upsertRequisition,
+  deleteRequisition,
+} from "./storage.js";
+
+const $ = (sel, root = document) => root.querySelector(sel);
+
+let state = loadState();
+let manifest = null;
+let currentPack = null;
+let editorDraft = null;
+let evaluateReqId = null;
+let lastScorecard = null;
+let resumeTextCache = "";
+
+const views = {
+  library: $("#view-library"),
+  editor: $("#view-editor"),
+  evaluate: $("#view-evaluate"),
+  scorecard: $("#view-scorecard"),
+};
+
+init();
+
+async function init() {
+  manifest = await loadManifest();
+  bindGlobal();
+  renderLibrary();
+  showView("library");
+}
+
+function bindGlobal() {
+  $("#btn-new-requisition")?.addEventListener("click", () => openEditor(null));
+  $("#btn-back-library")?.addEventListener("click", () => showView("library"));
+  $("#btn-back-library-editor")?.addEventListener("click", () => {
+    if (confirm("Discard unsaved changes?")) showView("library");
+  });
+  $("#btn-save-requisition")?.addEventListener("click", saveEditor);
+  $("#btn-extract-jd")?.addEventListener("click", runExtract);
+  $("#btn-evaluate-nav")?.addEventListener("click", () => {
+    state = loadState();
+    if (!state.requisitions.length) {
+      alert("Create and save a requisition first.");
+      showView("library");
+      return;
+    }
+    openEvaluate();
+  });
+  $("#btn-back-evaluate")?.addEventListener("click", () => showView("evaluate"));
+  $("#btn-run-score")?.addEventListener("click", runScore);
+  $("#btn-copy-scorecard")?.addEventListener("click", copyScorecard);
+  $("#btn-print-scorecard")?.addEventListener("click", () => window.print());
+}
+
+function showView(name) {
+  Object.entries(views).forEach(([key, el]) => {
+    if (el) el.hidden = key !== name;
+  });
+  document.body.dataset.view = name;
+  if (name === "library") renderLibrary();
+}
+
+async function openEditor(reqId) {
+  const defaultPackId = manifest?.defaultPackId || "project-controls";
+  currentPack = await loadDomainPack(defaultPackId);
+
+  if (reqId) {
+    const req = getRequisition(state, reqId);
+    if (!req) return;
+    if (req.domainPackId && req.domainPackId !== currentPack.packId) {
+      currentPack = await loadDomainPack(req.domainPackId);
+    }
+    editorDraft = JSON.parse(JSON.stringify(req));
+  } else {
+    const seeds = criteriaFromPack(currentPack, "pack");
+    editorDraft = {
+      id: uuid(),
+      domainPackId: currentPack.packId,
+      title: "",
+      jdRaw: "",
+      mustHaves: seeds.mustHaves,
+      preferred: seeds.preferred,
+      dealBreakers: seeds.dealBreakers,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  renderEditor();
+  showView("editor");
+}
+
+function renderEditor() {
+  $("#editor-title").textContent = editorDraft.id && getRequisition(state, editorDraft.id)
+    ? "Edit requisition"
+    : "New requisition";
+  $("#req-title").value = editorDraft.title || "";
+  $("#req-jd").value = editorDraft.jdRaw || "";
+  $("#editor-pack-label").textContent = currentPack?.title || editorDraft.domainPackId;
+
+  renderCriteriaList("must", editorDraft.mustHaves, $("#list-must"));
+  renderCriteriaList("preferred", editorDraft.preferred, $("#list-preferred"));
+  renderCriteriaList("deal", editorDraft.dealBreakers, $("#list-deal"));
+}
+
+function renderCriteriaList(kind, items, container) {
+  if (!container) return;
+  container.innerHTML = "";
+  items.forEach((item, index) => {
+    const row = document.createElement("div");
+    row.className = "criteria-row";
+    row.innerHTML = `
+      <input type="text" value="${escapeAttr(item.text)}" data-kind="${kind}" data-index="${index}" aria-label="Criterion" />
+      <button type="button" class="icon-btn" data-remove="${kind}" data-index="${index}" title="Remove">×</button>
+    `;
+    container.appendChild(row);
+  });
+
+  container.querySelectorAll("input").forEach((input) => {
+    input.addEventListener("change", () => syncCriteriaFromDom());
+  });
+  container.querySelectorAll("[data-remove]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const kind = btn.dataset.remove;
+      const index = Number(btn.dataset.index);
+      const key = kindKey(kind);
+      editorDraft[key].splice(index, 1);
+      renderEditor();
+    });
+  });
+}
+
+function kindKey(kind) {
+  if (kind === "must") return "mustHaves";
+  if (kind === "preferred") return "preferred";
+  return "dealBreakers";
+}
+
+function syncCriteriaFromDom() {
+  ["must", "preferred", "deal"].forEach((kind) => {
+    const key = kindKey(kind);
+    const container = $(`#list-${kind === "deal" ? "deal" : kind}`);
+    const inputs = container?.querySelectorAll("input") || [];
+    editorDraft[key] = [...inputs].map((input, i) => ({
+      id: editorDraft[key][i]?.id || uuid(),
+      text: input.value.trim(),
+      source: editorDraft[key][i]?.source || "manual",
+    })).filter((x) => x.text);
+  });
+}
+
+function addCriterion(kind) {
+  syncCriteriaFromDom();
+  const key = kindKey(kind);
+  editorDraft[key].push({ id: uuid(), text: "", source: "manual" });
+  renderEditor();
+  const container = $(`#list-${kind === "deal" ? "deal" : kind}`);
+  const last = container?.querySelector(".criteria-row:last-child input");
+  last?.focus();
+}
+
+window.addCriterion = addCriterion;
+
+async function runExtract() {
+  syncCriteriaFromDom();
+  const jd = $("#req-jd")?.value?.trim();
+  if (!jd) {
+    alert("Paste a job description first.");
+    return;
+  }
+  editorDraft.jdRaw = jd;
+  const extracted = extractFromJd(jd, currentPack);
+  const seeds = criteriaFromPack({ seedMustHaves: [], seedPreferred: [], seedDealBreakers: [] });
+  editorDraft = {
+    ...editorDraft,
+    ...mergeCriteria(
+      {
+        mustHaves: editorDraft.mustHaves,
+        preferred: editorDraft.preferred,
+        dealBreakers: editorDraft.dealBreakers,
+      },
+      extracted,
+      seeds
+    ),
+  };
+  renderEditor();
+}
+
+function saveEditor() {
+  syncCriteriaFromDom();
+  editorDraft.title = $("#req-title")?.value?.trim() || "Untitled requisition";
+  editorDraft.jdRaw = $("#req-jd")?.value?.trim() || "";
+  editorDraft.updatedAt = new Date().toISOString();
+  if (!editorDraft.createdAt) editorDraft.createdAt = editorDraft.updatedAt;
+
+  state = upsertRequisition(state, editorDraft);
+  saveState(state);
+  showView("library");
+}
+
+function renderLibrary() {
+  const list = $("#requisition-list");
+  const empty = $("#library-empty");
+  if (!list) return;
+
+  state = loadState();
+  const reqs = [...state.requisitions].sort(
+    (a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)
+  );
+
+  if (!reqs.length) {
+    list.innerHTML = "";
+    if (empty) empty.hidden = false;
+    return;
+  }
+  if (empty) empty.hidden = true;
+
+  list.innerHTML = reqs
+    .map(
+      (r) => `
+    <article class="req-card" data-id="${r.id}">
+      <div class="req-card-main">
+        <h3>${escapeHtml(r.title)}</h3>
+        <p class="muted">${escapeHtml(r.domainPackId || "project-controls")} · ${r.mustHaves?.length || 0} must · ${formatDate(r.updatedAt)}</p>
+      </div>
+      <div class="req-card-actions">
+        <button type="button" class="secondary" data-edit="${r.id}">Edit</button>
+        <button type="button" class="primary" data-eval="${r.id}">Evaluate</button>
+        <button type="button" class="danger-text" data-delete="${r.id}">Delete</button>
+      </div>
+    </article>
+  `
+    )
+    .join("");
+
+  list.querySelectorAll("[data-edit]").forEach((btn) =>
+    btn.addEventListener("click", () => openEditor(btn.dataset.edit))
+  );
+  list.querySelectorAll("[data-eval]").forEach((btn) =>
+    btn.addEventListener("click", () => openEvaluate(btn.dataset.eval))
+  );
+  list.querySelectorAll("[data-delete]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      if (confirm("Delete this requisition?")) {
+        state = deleteRequisition(state, btn.dataset.delete);
+        saveState(state);
+        renderLibrary();
+      }
+    })
+  );
+}
+
+function openEvaluate(preselectedId) {
+  state = loadState();
+  evaluateReqId = preselectedId || null;
+  const select = $("#evaluate-requisition");
+  if (!select) return;
+
+  select.innerHTML = state.requisitions
+    .map(
+      (r) =>
+        `<option value="${r.id}" ${r.id === evaluateReqId ? "selected" : ""}>${escapeHtml(r.title)}</option>`
+    )
+    .join("");
+
+  if (!state.requisitions.length) {
+    select.innerHTML = `<option value="">No saved requisitions</option>`;
+  } else if (!evaluateReqId) {
+    evaluateReqId = state.requisitions[0].id;
+    select.value = evaluateReqId;
+  }
+
+  select.onchange = () => {
+    evaluateReqId = select.value;
+    resetDropZone();
+  };
+
+  evaluateReqId = select.value || evaluateReqId;
+  resetDropZone();
+  showView("evaluate");
+}
+
+function resetDropZone() {
+  resumeTextCache = "";
+  lastScorecard = null;
+  const preview = $("#resume-preview");
+  if (preview) preview.textContent = "";
+  const status = $("#drop-status");
+  if (status) status.textContent = "Drop a resume PDF here or click to browse";
+  const fileInput = $("#resume-file");
+  if (fileInput) fileInput.value = "";
+}
+
+function setupDropZone() {
+  const zone = $("#drop-zone");
+  const fileInput = $("#resume-file");
+  if (!zone || !fileInput) return;
+
+  zone.addEventListener("click", () => fileInput.click());
+  zone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    zone.classList.add("dragover");
+  });
+  zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
+  zone.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    zone.classList.remove("dragover");
+    const file = e.dataTransfer?.files?.[0];
+    if (file) await handleResumeFile(file);
+  });
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files?.[0];
+    if (file) await handleResumeFile(file);
+  });
+}
+
+async function handleResumeFile(file) {
+  if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+    alert("Please upload a PDF resume.");
+    return;
+  }
+  const status = $("#drop-status");
+  if (status) status.textContent = "Reading PDF…";
+  try {
+    resumeTextCache = await extractTextFromPdf(file);
+    if (status) status.textContent = `${file.name} · ${resumeTextCache.length.toLocaleString()} characters extracted`;
+    const preview = $("#resume-preview");
+    if (preview) preview.textContent = resumeTextCache.slice(0, 600) + (resumeTextCache.length > 600 ? "…" : "");
+  } catch (err) {
+    if (status) status.textContent = "Could not read PDF";
+    alert(err.message || "PDF extraction failed");
+  }
+}
+
+async function runScore() {
+  const req = getRequisition(state, evaluateReqId);
+  if (!req) {
+    alert("Select a saved requisition first.");
+    return;
+  }
+  if (!resumeTextCache) {
+    alert("Drop a resume PDF first.");
+    return;
+  }
+  const pack = await loadDomainPack(req.domainPackId || manifest.defaultPackId);
+  lastScorecard = scoreCandidate(resumeTextCache, req, pack);
+  renderScorecard(req, lastScorecard);
+  showView("scorecard");
+}
+
+function renderScorecard(req, sc) {
+  const rec = sc.recommendation;
+  $("#score-overall").textContent = sc.overall;
+  const badge = $("#score-recommendation");
+  badge.textContent = rec;
+  badge.className = `rec-badge rec-${recClass(rec)}`;
+
+  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)}`;
+
+  renderCoverage("#must-coverage", sc.mustHaveCoverage);
+  renderCoverage("#pref-coverage", sc.preferredCoverage);
+
+  const dealEl = $("#deal-risks");
+  if (dealEl) {
+    if (!sc.dealBreakerRisks.length) {
+      dealEl.innerHTML = `<p class="muted">No deal-breaker risk flags triggered.</p>`;
+    } else {
+      dealEl.innerHTML = sc.dealBreakerRisks
+        .map(
+          (d) => `
+        <div class="risk-item">
+          <strong>${escapeHtml(d.text)}</strong>
+          <span>${escapeHtml(d.reason)}</span>
+        </div>`
+        )
+        .join("");
+    }
+  }
+
+  const claims = $("#claim-summary");
+  if (claims) {
+    claims.innerHTML = sc.resumeClaimSummary
+      .map((c) => `<li>${escapeHtml(c)}</li>`)
+      .join("");
+  }
+
+  $("#screening-question").textContent = sc.suggestedScreeningQuestion;
+}
+
+function renderCoverage(sel, coverage) {
+  const el = $(sel);
+  if (!el) return;
+  const bar = `<div class="coverage-bar"><div class="coverage-fill" style="width:${coverage.percent}%"></div></div>`;
+  const summary = `<p><strong>${coverage.percent}%</strong> · ${coverage.matched} of ${coverage.total} matched</p>`;
+  const items = (coverage.items || [])
+    .map(
+      (item) => `
+    <div class="coverage-item ${item.matched ? "matched" : "miss"}">
+      <span>${item.matched ? "✓" : "○"}</span>
+      <span>${escapeHtml(item.text)}</span>
+    </div>`
+    )
+    .join("");
+  el.innerHTML = bar + summary + `<div class="coverage-items">${items}</div>`;
+}
+
+function recClass(rec) {
+  if (rec === "Submit") return "submit";
+  if (rec === "Verify Further") return "verify";
+  return "reject";
+}
+
+function copyScorecard() {
+  const text = $("#scorecard-printable")?.innerText;
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(
+    () => alert("Scorecard copied to clipboard."),
+    () => alert("Copy failed — select and copy manually.")
+  );
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function escapeAttr(s) {
+  return escapeHtml(s).replace(/'/g, "&#39;");
+}
+
+function formatDate(iso) {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+setupDropZone();

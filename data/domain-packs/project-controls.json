@@ -1,0 +1,94 @@
+{
+  "packId": "project-controls",
+  "title": "Project Controls & Scheduling",
+  "description": "Schedulers, planners, cost engineers, project controls",
+  "seedMustHaves": [
+    "Primavera P6 or MS Project scheduling experience",
+    "Critical path method (CPM) scheduling",
+    "Schedule baseline and progress update experience",
+    "Ability to read and interpret construction/engineering drawings at a coordination level"
+  ],
+  "seedPreferred": [
+    "Earned value management (EVM / EVMS)",
+    "MSP (Microsoft Project Server) or portfolio scheduling",
+    "Cost engineering or cost reporting support",
+    "EPC, data center, nuclear, or industrial project background",
+    "Recovery schedule development",
+    "Delay analysis or time impact analysis exposure"
+  ],
+  "seedDealBreakers": [
+    "No scheduling software experience (P6, MSP, or MS Project)",
+    "Unable to meet on-site or client location requirements if stated in JD",
+    "No verifiable project scheduling or controls role history"
+  ],
+  "keywordHints": {
+    "must": [
+      "primavera",
+      "p6",
+      "ms project",
+      "microsoft project",
+      "cpm",
+      "critical path",
+      "scheduler",
+      "scheduling",
+      "baseline",
+      "update schedule",
+      "project controls",
+      "cost engineer",
+      "cost engineering"
+    ],
+    "preferred": [
+      "evms",
+      "evm",
+      "earned value",
+      "msp",
+      "recovery schedule",
+      "delay analysis",
+      "tia",
+      "epc",
+      "data center",
+      "nuclear",
+      "wbs",
+      "resource loading",
+      "lookahead",
+      "4d",
+      "5d"
+    ],
+    "dealBreaker": [
+      "no experience",
+      "without",
+      "disqualif",
+      "must not",
+      "unable to"
+    ]
+  },
+  "jdSectionLabels": {
+    "must": [
+      "required",
+      "requirements",
+      "must have",
+      "must-have",
+      "minimum qualifications",
+      "minimum requirements",
+      "qualifications",
+      "essential",
+      "mandatory"
+    ],
+    "preferred": [
+      "preferred",
+      "nice to have",
+      "nice-to-have",
+      "desired",
+      "pluses",
+      "bonus",
+      "ideal"
+    ],
+    "dealBreaker": [
+      "deal breaker",
+      "deal-breaker",
+      "disqualif",
+      "will not consider",
+      "not eligible"
+    ]
+  }
+}

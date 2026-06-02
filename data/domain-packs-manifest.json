@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "defaultPackId": "project-controls",
+  "packs": [
+    {
+      "id": "project-controls",
+      "title": "Project Controls & Scheduling",
+      "description": "Schedulers, planners, cost engineers, project controls",
+      "packFile": "domain-packs/project-controls.json"
+    }
+  ]
+}
