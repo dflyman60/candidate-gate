@@ -1,5 +1,7 @@
 /** Evidence depth and resume structure analysis. */
 
+import { analyzeLegitimacy } from "./legitimacy.js";
+
 const DATE_RE = /\b(?:19|20)\d{2}\s*[-–—]\s*(?:19|20)\d{2}\b|\b(?:19|20)\d{2}\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b/i;
 const YEARS_RE = /\b\d{1,2}\+?\s*(?:years?|yrs?)\b/i;
 const METRICS_RE = /\b\d[\d,]*\+?\s*(?:activities|resources|projects|mw|mwh|\$|million|billion|k)\b/i;
@@ -66,9 +68,10 @@ export function findBestSnippet(resumeText, criterionText, domainPack) {
   return candidates[0];
 }
 
-export function assessCriterionEvidence(resumeText, criterionText, domainPack) {
+export function assessCriterionEvidence(resumeText, criterionText, domainPack, jdRaw = "") {
   const snippetResult = findBestSnippet(resumeText, criterionText, domainPack);
   if (!snippetResult) {
+    const legitimacy = analyzeLegitimacy(criterionText, null, null, [], jdRaw, domainPack);
     return {
       text: criterionText,
       matched: false,
@@ -78,12 +81,14 @@ export function assessCriterionEvidence(resumeText, criterionText, domainPack) {
       section: null,
       signals: [],
       verificationQuestion: buildVerificationQuestion(criterionText, null),
+      legitimacy,
     };
   }
 
   const { snippet, section, signals } = snippetResult;
   const confidence = scoreConfidence(section, signals, snippet);
   const matched = confidence !== "none";
+  const legitimacy = analyzeLegitimacy(criterionText, snippet, section, signals, jdRaw, domainPack);
 
   return {
     text: criterionText,
@@ -94,7 +99,8 @@ export function assessCriterionEvidence(resumeText, criterionText, domainPack) {
     section,
     sectionLabel: sectionLabel(section, snippet),
     signals,
-    verificationQuestion: buildVerificationQuestion(criterionText, snippet),
+    verificationQuestion: buildVerificationQuestion(criterionText, snippet, legitimacy),
+    legitimacy,
   };
 }
 
@@ -229,10 +235,16 @@ export function runConsistencyChecks(resumeText, mustResults, requisition) {
   return flags;
 }
 
-function buildVerificationQuestion(criterionText, snippet) {
+function buildVerificationQuestion(criterionText, snippet, legitimacy) {
   const topic = criterionText.replace(/\.$/, "");
   if (!snippet) {
     return `I don't see clear evidence for "${topic}". Describe a specific project—client, dates, your role, tools used, and a deliverable you owned.`;
+  }
+  if (legitimacy?.tier === "likely-mirrored") {
+    return `Your resume echoes the posting for "${topic}" but doesn't show job-level proof. Name the employer, project dates, schedule size, and one deliverable you personally produced—without reading the resume.`;
+  }
+  if (legitimacy?.tier === "self-reported") {
+    return `"${topic}" appears as a claim in your summary/header. Which role and employer was this on, and what did you deliver using that skill?`;
   }
   return `Your resume mentions "${topic}" (${snippet.slice(0, 80)}…). Walk me through that project: schedule size, update cadence, software version, and who validated your work.`;
 }

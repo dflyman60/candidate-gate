@@ -363,7 +363,7 @@ function renderScorecard(req, sc) {
   badge.textContent = rec;
   badge.className = `rec-badge rec-${recClass(rec)}`;
 
-  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2.1`;
+  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2.2`;
 
   renderMirroring(sc.mirroring);
   renderCoverage("#must-coverage", sc.mustHaveCoverage, true);
@@ -386,6 +386,7 @@ function renderScorecard(req, sc) {
         (q) => `
       <li class="screen-kit-item">
         <span class="conf-badge conf-${q.confidence}">${escapeHtml(q.confidence)}</span>
+        ${q.legitimacy ? `<span class="leg-badge leg-${legClass(q.legitimacy)}">${escapeHtml(q.legitimacy)}</span>` : ""}
         <strong>${escapeHtml(q.criterion)}</strong>
         <p>${escapeHtml(q.question)}</p>
         ${q.snippet ? `<p class="evidence-label">Resume evidence · ${escapeHtml(q.sectionLabel || "matched text")}:</p><p class="muted snippet">“${escapeHtml(q.snippet.slice(0, 120))}${q.snippet.length > 120 ? "…" : ""}”</p>` : ""}
@@ -472,29 +473,69 @@ function renderCoverage(sel, coverage, showSubstantiated) {
   if (!el) return;
   const bar = `<div class="coverage-bar"><div class="coverage-fill" style="width:${coverage.percent}%"></div></div>`;
   const sub = showSubstantiated
-    ? ` · <strong>${coverage.substantiatedPercent}%</strong> high-confidence`
+    ? ` · <strong>${coverage.substantiatedPercent ?? 0}%</strong> supported in experience`
     : "";
-  const summary = `<p><strong>${coverage.percent}%</strong> evidence-weighted${sub} · ${coverage.high} high · ${coverage.medium} medium · ${coverage.low} keyword-only</p>`;
-  const items = (coverage.items || [])
-    .map((item) => {
-      const conf = item.confidence || (item.matched ? "low" : "none");
-      const evidenceBlock = item.snippet
-        ? `<div class="evidence-block">
-            <p class="evidence-label">Resume evidence for this rating${item.sectionLabel ? ` · ${escapeHtml(item.sectionLabel)}` : ""}:</p>
-            <p class="snippet">“${escapeHtml(item.snippet.slice(0, 220))}${item.snippet.length > 220 ? "…" : ""}”</p>
-          </div>`
-        : `<p class="evidence-label muted">No resume excerpt matched this requirement.</p>`;
-      return `
+  const mirrorNote = coverage.mirrored
+    ? ` · <strong>${coverage.mirrored}</strong> likely JD-mirrored`
+    : "";
+  const summary = `<p><strong>${coverage.percent}%</strong> evidence + legitimacy weighted${sub}${mirrorNote} · ${coverage.high} high · ${coverage.medium} medium · ${coverage.low} keyword-only</p>`;
+  const items = (coverage.items || []).map((item) => renderCriterionRow(item)).join("");
+  el.innerHTML = bar + summary + `<div class="coverage-items">${items}</div>`;
+}
+
+function renderCriterionRow(item) {
+  const conf = item.confidence || (item.matched ? "low" : "none");
+  const leg = item.legitimacy;
+  const evidenceBlock = item.snippet
+    ? `<div class="evidence-block">
+        <p class="evidence-label">Resume evidence for this rating${item.sectionLabel ? ` · ${escapeHtml(item.sectionLabel)}` : ""}:</p>
+        <p class="snippet">“${escapeHtml(item.snippet.slice(0, 220))}${item.snippet.length > 220 ? "…" : ""}”</p>
+      </div>`
+    : `<p class="evidence-label muted">No resume excerpt matched this requirement.</p>`;
+
+  const legBlock = leg
+    ? `<div class="legitimacy-block">
+        <span class="leg-badge leg-${leg.tier}">${escapeHtml(leg.label)}</span>
+        ${leg.jdEchoPercent != null ? `<span class="jd-echo">${leg.jdEchoPercent}% JD echo</span>` : ""}
+        <p class="leg-summary muted">${escapeHtml(leg.summary)}</p>
+        ${renderIntentChecklist(leg.intent)}
+      </div>`
+    : "";
+
+  return `
     <div class="coverage-item conf-${conf}">
-      <span class="conf-badge conf-${conf}">${escapeHtml(item.confidenceLabel || conf)}</span>
+      <div class="coverage-badges">
+        <span class="conf-badge conf-${conf}">${escapeHtml(item.confidenceLabel || conf)}</span>
+      </div>
       <div class="coverage-item-body">
         <span class="criterion-text">${escapeHtml(item.text)}</span>
         ${evidenceBlock}
+        ${legBlock}
       </div>
     </div>`;
+}
+
+function renderIntentChecklist(intent) {
+  if (!intent?.length) return "";
+  const rows = intent
+    .filter((i) => i.status !== "na")
+    .map((i) => {
+      const icon = i.status === "met" ? "✓" : "○";
+      const cls = i.status === "met" ? "intent-met" : "intent-miss";
+      return `<li class="${cls}"><span>${icon}</span> ${escapeHtml(i.label)}</li>`;
     })
     .join("");
-  el.innerHTML = bar + summary + `<div class="coverage-items">${items}</div>`;
+  if (!rows) return "";
+  return `<div class="intent-checklist"><p class="evidence-label">Requirement intent</p><ul>${rows}</ul></div>`;
+}
+
+function legClass(label) {
+  if (!label) return "unknown";
+  if (label.includes("mirrored")) return "likely-mirrored";
+  if (label.includes("Self-reported")) return "self-reported";
+  if (label.includes("Supported")) return "supported";
+  if (label.includes("Partially")) return "partial";
+  return "unknown";
 }
 
 function recClass(rec) {

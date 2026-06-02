@@ -1,20 +1,23 @@
 import { summarizeResumeClaims } from "./resume-parse.js";
 import { assessCriterionEvidence, runConsistencyChecks, confidenceWeight } from "./evidence.js";
 import { analyzeJdMirroring, mirroringPenalty } from "./mirroring.js";
+import { legitimacyWeight } from "./legitimacy.js";
 
 export function scoreCandidate(resumeText, requisition, domainPack) {
+  const jdRaw = requisition.jdRaw || "";
   const mustResults = requisition.mustHaves.map((c) =>
-    assessCriterionEvidence(resumeText, c.text, domainPack)
+    assessCriterionEvidence(resumeText, c.text, domainPack, jdRaw)
   );
   const prefResults = requisition.preferred.map((c) =>
-    assessCriterionEvidence(resumeText, c.text, domainPack)
+    assessCriterionEvidence(resumeText, c.text, domainPack, jdRaw)
   );
   const dealResults = requisition.dealBreakers.map((c) =>
     assessDealBreaker(resumeText, c.text, domainPack, mustResults)
   );
 
   const mirroring = analyzeJdMirroring(resumeText, requisition);
-  const consistencyFlags = runConsistencyChecks(resumeText, mustResults, requisition);
+  let consistencyFlags = runConsistencyChecks(resumeText, mustResults, requisition);
+  consistencyFlags = appendMirroredFlags(consistencyFlags, mustResults);
 
   const mustWeighted = weightedCoverage(mustResults);
   const prefWeighted = weightedCoverage(prefResults);
@@ -51,7 +54,7 @@ export function scoreCandidate(resumeText, requisition, domainPack) {
   return {
     overall,
     recommendation,
-    scoringVersion: 2,
+    scoringVersion: "2.2",
     mustHaveCoverage: coverageSummary(mustResults, mustWeighted),
     preferredCoverage: coverageSummary(prefResults, prefWeighted),
     dealBreakerRisks: dealResults.filter((r) => r.risk),
@@ -66,8 +69,18 @@ export function scoreCandidate(resumeText, requisition, domainPack) {
 
 function weightedCoverage(results) {
   if (!results.length) return 0;
-  const sum = results.reduce((acc, r) => acc + confidenceWeight(r.confidence), 0);
+  const sum = results.reduce((acc, r) => acc + blendedCriterionWeight(r), 0);
   return sum / results.length;
+}
+
+function blendedCriterionWeight(r) {
+  const cw = confidenceWeight(r.confidence);
+  const lw = legitimacyWeight(r.legitimacy?.tier);
+  if (r.legitimacy?.tier === "likely-mirrored") return Math.min(cw, 0.1);
+  if (r.legitimacy?.tier === "self-reported") return Math.min(cw, 0.22);
+  if (r.legitimacy?.tier === "not-found") return 0;
+  if (lw > 0 && cw > 0) return (cw + lw) / 2;
+  return cw;
 }
 
 function coverageSummary(results, weighted) {
@@ -75,14 +88,18 @@ function coverageSummary(results, weighted) {
   const medium = results.filter((r) => r.confidence === "medium").length;
   const low = results.filter((r) => r.confidence === "low").length;
   const matched = results.filter((r) => r.matched).length;
+  const supported = results.filter((r) => r.legitimacy?.tier === "supported").length;
+  const mirrored = results.filter((r) => r.legitimacy?.tier === "likely-mirrored").length;
   return {
     matched,
     total: results.length,
     percent: Math.round(weighted * 100),
-    substantiatedPercent: results.length ? Math.round((high / results.length) * 100) : 0,
+    substantiatedPercent: results.length ? Math.round((supported / results.length) * 100) : 0,
     high,
     medium,
     low,
+    supported,
+    mirrored,
     items: results,
   };
 }
@@ -114,16 +131,20 @@ function recommend(ctx) {
   const highMirror = mirroring.riskLevel === "high";
   const mediumMirror = mirroring.riskLevel === "medium";
 
+  const mirroredCount = mustResults.filter((r) => r.legitimacy?.tier === "likely-mirrored").length;
+  const supportedCount = mustResults.filter((r) => r.legitimacy?.tier === "supported").length;
+
   if (highMirror && substantiatedRatio < 0.5) return "Do Not Submit";
+  if (mirroredCount >= Math.ceil(mustTotal * 0.5) && supportedCount === 0) return "Do Not Submit";
   if (mustPct < 35 && mustHigh === 0) return "Do Not Submit";
   if (dealRisks.length >= 3 && mustHigh < 2) return "Do Not Submit";
 
   if (
-    substantiatedRatio >= 0.6 &&
-    mustHigh >= Math.ceil(mustTotal * 0.5) &&
+    supportedCount >= Math.ceil(mustTotal * 0.5) &&
+    mustHigh >= Math.ceil(mustTotal * 0.4) &&
     !highMirror &&
-    overall >= 68 &&
-    mustMedium + mustHigh >= Math.ceil(mustTotal * 0.75)
+    mirroredCount === 0 &&
+    overall >= 68
   ) {
     return "Submit";
   }
@@ -137,14 +158,18 @@ function recommend(ctx) {
 
 function buildScreenKit(mustResults, prefResults, mirroring) {
   const priority = [
-    ...mustResults.filter((r) => r.confidence === "none" || r.confidence === "low"),
+    ...mustResults.filter((r) => r.legitimacy?.tier === "likely-mirrored"),
+    ...mustResults.filter((r) => r.legitimacy?.tier === "self-reported"),
+    ...mustResults.filter((r) => r.confidence === "none"),
+    ...mustResults.filter((r) => r.confidence === "low" && r.legitimacy?.tier !== "likely-mirrored"),
     ...mustResults.filter((r) => r.confidence === "medium"),
-    ...prefResults.filter((r) => r.confidence === "none" || r.confidence === "low"),
+    ...prefResults.filter((r) => r.legitimacy?.tier === "likely-mirrored" || r.confidence === "none" || r.confidence === "low"),
   ];
 
   const questions = priority.slice(0, 6).map((r) => ({
     criterion: r.text,
     confidence: r.confidence,
+    legitimacy: r.legitimacy?.label,
     question: r.verificationQuestion,
     snippet: r.snippet,
     sectionLabel: r.sectionLabel,
@@ -187,4 +212,25 @@ function assessDealBreaker(resumeText, breakerText, domainPack, mustResults) {
   }
 
   return { text: breakerText, risk: false, reason: "No clear deal-breaker signal" };
+}
+
+function appendMirroredFlags(flags, mustResults) {
+  const next = [...flags];
+  const mirrored = mustResults.filter((r) => r.legitimacy?.tier === "likely-mirrored");
+  if (mirrored.length >= 2) {
+    next.push({
+      severity: "high",
+      title: "Multiple must-haves likely mirrored from JD",
+      detail: `${mirrored.length} requirement(s) echo posting language without experience-level proof. Strong signal of AI-tailored or copy-pasted resume.`,
+    });
+  }
+  const selfReported = mustResults.filter((r) => r.legitimacy?.tier === "self-reported");
+  if (selfReported.length >= Math.ceil(mustResults.length * 0.6) && mustResults.length >= 3) {
+    next.push({
+      severity: "medium",
+      title: "Most must-haves are self-reported claims",
+      detail: "Requirements appear as upfront claims rather than substantiated job bullets.",
+    });
+  }
+  return next;
 }
