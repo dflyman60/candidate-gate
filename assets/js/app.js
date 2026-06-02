@@ -684,10 +684,6 @@ function closeAllTipDefinitions() {
   });
 }
 
-function escapeAttr(s) {
-  return String(s).replace(/"/g, "&quot;");
-}
-
 function escapeHtml(s) {
   return String(s)
     .replace(/&/g, "&amp;")
