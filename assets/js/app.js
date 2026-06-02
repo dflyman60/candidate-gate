@@ -10,8 +10,16 @@ import {
   upsertRequisition,
   deleteRequisition,
 } from "./storage.js";
+import {
+  confidenceDisplayLabel,
+  resolveConfidenceTipKey,
+  resolveLegitimacyTipKey,
+  getTipDefinition,
+} from "./label-definitions.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
+
+let tipIdSeq = 0;
 
 let state = loadState();
 let manifest = null;
@@ -58,6 +66,7 @@ function bindGlobal() {
   $("#btn-run-score")?.addEventListener("click", runScore);
   $("#btn-copy-scorecard")?.addEventListener("click", copyScorecard);
   $("#btn-print-scorecard")?.addEventListener("click", () => window.print());
+  bindLabelTooltips();
 }
 
 function showView(name) {
@@ -357,11 +366,14 @@ async function runScore() {
 }
 
 function renderScorecard(req, sc) {
+  tipIdSeq = 0;
   const rec = sc.recommendation;
   $("#score-overall").textContent = sc.overall;
   const badge = $("#score-recommendation");
-  badge.textContent = rec;
-  badge.className = `rec-badge rec-${recClass(rec)}`;
+  if (badge) {
+    badge.className = `rec-badge rec-${recClass(rec)}`;
+    badge.innerHTML = renderTipBadge(rec, rec, `rec-badge rec-${recClass(rec)}`);
+  }
 
   $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2.7`;
 
@@ -385,9 +397,21 @@ function renderScorecard(req, sc) {
       .map(
         (q) => `
       <li class="screen-kit-item">
-        <span class="conf-badge conf-${q.confidence}">${escapeHtml(q.confidence)}</span>
-        ${q.legitimacy ? `<span class="leg-badge leg-${legClass(q.legitimacy)}">${escapeHtml(q.legitimacy)}</span>` : ""}
-        ${q.notOnResume ? `<span class="leg-badge leg-not-on-resume">Not on resume</span>` : ""}
+        ${renderTipBadge(
+          confidenceDisplayLabel(q.confidence),
+          resolveConfidenceTipKey(q.confidence),
+          `conf-badge conf-${q.confidence || "none"}`
+        )}
+        ${q.legitimacy
+          ? renderTipBadge(
+              q.legitimacy,
+              resolveLegitimacyTipKey(legClass(q.legitimacy)),
+              `leg-badge leg-${legClass(q.legitimacy)}`
+            )
+          : ""}
+        ${q.notOnResume
+          ? renderTipBadge("Not on resume", "not-on-resume-badge", "leg-badge leg-not-on-resume")
+          : ""}
         <p class="evidence-label">Requisition requirement (from job description)</p>
         <strong class="criterion-text">${escapeHtml(q.criterion)}</strong>
         <p class="screen-kit-question">${escapeHtml(q.question)}</p>
@@ -404,15 +428,32 @@ function renderScorecard(req, sc) {
   }
 }
 
+function renderMatchedPhraseRow(p) {
+  const label = typeof p === "string" ? p : p.text;
+  const near = typeof p === "string" ? p.includes("(near match)") : p.nearMatch;
+  const n = typeof p === "string" ? 1 : p.occurrences || 1;
+  const suffix = near ? " (near match)" : "";
+  const occLabel = `${n} occurrence${n === 1 ? "" : "s"} on resume`;
+  return `<li><span class="mirror-phrase-text">${escapeHtml(label)}${suffix ? `<span class="muted">${suffix}</span>` : ""}</span> <span class="phrase-occ-count">${escapeHtml(occLabel)}</span></li>`;
+}
+
 function renderMirroring(mirroring) {
   const el = $("#mirroring-panel");
   if (!el || !mirroring) return;
 
   const riskClass = `mirror-${mirroring.riskLevel || "none"}`;
+  const risk = mirroring.riskLevel || "none";
   let html = `
     <div class="mirror-summary ${riskClass}">
-      <strong>Tailoring risk: ${escapeHtml(mirroring.riskLevel || "unknown")}</strong>
+      ${renderTipBadge(
+        `Tailoring risk: ${risk}`,
+        risk,
+        `mirror-risk-tip mirror-${risk}`
+      )}
       <span class="muted"> · ${mirroring.similarityPercent ?? 0}% JD token overlap</span>
+      ${mirroring.matchedPhraseCount
+        ? `<span class="muted"> · ${mirroring.matchedPhraseCount} phrase${mirroring.matchedPhraseCount === 1 ? "" : "s"}, ${mirroring.totalPhraseOccurrences ?? 0} occurrence${(mirroring.totalPhraseOccurrences ?? 0) === 1 ? "" : "s"}</span>`
+        : ""}
     </div>`;
 
   if (mirroring.flags?.length) {
@@ -428,8 +469,15 @@ function renderMirroring(mirroring) {
   }
 
   if (mirroring.matchedPhrases?.length) {
-    html += `<details class="mirror-phrases"><summary>Matched JD phrases (${mirroring.matchedPhrases.length})</summary><ul>`;
-    html += mirroring.matchedPhrases.map((p) => `<li>${escapeHtml(p)}</li>`).join("");
+    const shown = mirroring.matchedPhrases.length;
+    const total = mirroring.matchedPhraseCount ?? shown;
+    const occ = mirroring.totalPhraseOccurrences ?? mirroring.matchedPhrases.reduce((s, p) => s + (p.occurrences || 1), 0);
+    const summaryLabel =
+      total > shown
+        ? `Matched JD phrases (${shown} of ${total} · ${occ} occurrences on resume)`
+        : `Matched JD phrases (${total} · ${occ} occurrence${occ === 1 ? "" : "s"} on resume)`;
+    html += `<details class="mirror-phrases"><summary>${escapeHtml(summaryLabel)}</summary><ul>`;
+    html += mirroring.matchedPhrases.map((p) => renderMatchedPhraseRow(p)).join("");
     html += `</ul></details>`;
   }
 
@@ -479,13 +527,15 @@ function renderCoverage(sel, coverage, showSubstantiated) {
   if (!el) return;
   const bar = `<div class="coverage-bar"><div class="coverage-fill" style="width:${coverage.percent}%"></div></div>`;
   const sub = showSubstantiated
-    ? ` · <strong>${coverage.substantiatedPercent ?? 0}%</strong> supported in experience`
+    ? ` · <strong>${coverage.substantiatedPercent ?? 0}%</strong> ${renderCountTip("supported-pct", "supported in experience")}`
     : "";
   const mirrorNote = coverage.mirrored
-    ? ` · <strong>${coverage.mirrored}</strong> likely JD-mirrored`
+    ? ` · <strong>${coverage.mirrored}</strong> ${renderCountTip("mirrored", "likely JD-mirrored")}`
     : "";
-  const rel = coverage.relevant ? ` · ${coverage.relevant} role-related` : "";
-  const summary = `<p><strong>${coverage.percent}%</strong> evidence + legitimacy weighted${sub}${mirrorNote} · ${coverage.high} substantiated${rel} · ${coverage.medium} partial · ${coverage.low} keyword-only</p>`;
+  const rel = coverage.relevant
+    ? ` · ${coverage.relevant} ${renderCountTip("role-related", "role-related")}`
+    : "";
+  const summary = `<p><strong>${coverage.percent}%</strong> evidence + legitimacy weighted${sub}${mirrorNote} · ${coverage.high} ${renderCountTip("substantiated", "substantiated")}${rel} · ${coverage.medium} ${renderCountTip("partial", "partial")} · ${coverage.low} ${renderCountTip("keyword-only", "keyword-only")}</p>`;
   const items = (coverage.items || []).map((item) => renderCriterionRow(item)).join("");
   el.innerHTML = bar + summary + `<div class="coverage-items">${items}</div>`;
 }
@@ -512,8 +562,14 @@ function renderCriterionRow(item) {
 
   const legBlock = leg
     ? `<div class="legitimacy-block">
-        <span class="leg-badge leg-${leg.tier}">${escapeHtml(leg.label)}</span>
-        ${leg.jdEchoPercent != null ? `<span class="jd-echo">${leg.jdEchoPercent}% resume echoes requirement</span>` : ""}
+        ${renderTipBadge(leg.label, resolveLegitimacyTipKey(leg.tier), `leg-badge leg-${leg.tier}`)}
+        ${leg.jdEchoPercent != null
+          ? renderTipBadge(
+              `${leg.jdEchoPercent}% resume echoes requirement`,
+              "jd-echo",
+              "jd-echo tip-ghost"
+            )
+          : ""}
         <p class="leg-summary muted">${escapeHtml(leg.summary)}</p>
         ${renderIntentChecklist(leg.intent)}
       </div>`
@@ -522,7 +578,11 @@ function renderCriterionRow(item) {
   return `
     <div class="coverage-item conf-${conf}">
       <div class="coverage-badges">
-        <span class="conf-badge conf-${conf}">${escapeHtml(item.confidenceLabel || conf)}</span>
+        ${renderTipBadge(
+          item.confidenceLabel || confidenceDisplayLabel(conf),
+          resolveConfidenceTipKey(conf, item.confidenceLabel),
+          `conf-badge conf-${conf}`
+        )}
       </div>
       <div class="coverage-item-body">
         <p class="evidence-label">Requisition requirement</p>
@@ -570,6 +630,62 @@ function copyScorecard() {
     () => alert("Scorecard copied to clipboard."),
     () => alert("Copy failed — select and copy manually.")
   );
+}
+
+function renderTipBadge(displayText, tipKey, classNames) {
+  const id = `cg-tip-${++tipIdSeq}`;
+  const definition = getTipDefinition(tipKey);
+  return `<span class="tip-wrap">
+    <button type="button" class="${classNames} tip-trigger" aria-expanded="false" aria-describedby="${id}" data-tip-key="${escapeAttr(tipKey)}" title="Show definition">${escapeHtml(displayText)}</button>
+    <span class="tip-definition" id="${id}" role="tooltip" hidden>${escapeHtml(definition)}</span>
+  </span>`;
+}
+
+function renderCountTip(tipKey, label) {
+  return renderTipBadge(label, tipKey, "count-tip tip-ghost");
+}
+
+function bindLabelTooltips() {
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tip-trigger");
+    if (btn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const wrap = btn.closest(".tip-wrap");
+      const panel = wrap?.querySelector(".tip-definition");
+      const wasOpen = panel && !panel.hidden;
+      closeAllTipDefinitions();
+      if (!wasOpen && panel) {
+        panel.hidden = false;
+        btn.setAttribute("aria-expanded", "true");
+      }
+      return;
+    }
+    if (!e.target.closest(".tip-definition")) closeAllTipDefinitions();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeAllTipDefinitions();
+    const btn = e.target.closest?.(".tip-trigger");
+    if (!btn) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      btn.click();
+    }
+  });
+}
+
+function closeAllTipDefinitions() {
+  document.querySelectorAll(".tip-definition").forEach((p) => {
+    p.hidden = true;
+  });
+  document.querySelectorAll('.tip-trigger[aria-expanded="true"]').forEach((b) => {
+    b.setAttribute("aria-expanded", "false");
+  });
+}
+
+function escapeAttr(s) {
+  return String(s).replace(/"/g, "&quot;");
 }
 
 function escapeHtml(s) {

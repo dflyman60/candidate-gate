@@ -8,45 +8,66 @@ export function analyzeJdMirroring(resumeText, requisition) {
       riskLevel: "unknown",
       similarityPercent: 0,
       matchedPhrases: [],
+      matchedPhraseCount: 0,
+      totalPhraseOccurrences: 0,
       flags: [{ severity: "low", title: "No JD on file", detail: "Save the full job description with this requisition for mirroring analysis." }],
     };
   }
 
   const jdPhrases = collectPhrases(jd, requisition);
   const resumeLower = resumeText.toLowerCase();
-  const matchedPhrases = [];
+  const allMatched = [];
 
   for (const phrase of jdPhrases) {
     if (phrase.length < 12) continue;
     const pLower = phrase.toLowerCase();
+    let nearMatch = false;
     if (resumeLower.includes(pLower)) {
-      matchedPhrases.push(phrase);
+      nearMatch = false;
     } else if (fuzzyContains(resumeLower, pLower)) {
-      matchedPhrases.push(phrase + " (near match)");
+      nearMatch = true;
+    } else {
+      continue;
     }
+
+    let occurrences = countPhraseOccurrences(resumeLower, pLower, nearMatch);
+    if (occurrences < 1) occurrences = 1;
+
+    allMatched.push({
+      text: phrase,
+      nearMatch,
+      occurrences,
+    });
   }
+
+  const matchedPhraseCount = allMatched.length;
+  const totalPhraseOccurrences = allMatched.reduce((sum, m) => sum + m.occurrences, 0);
+  const matchedPhrases = [...allMatched]
+    .sort((a, b) => b.occurrences - a.occurrences || a.text.localeCompare(b.text))
+    .slice(0, 12);
 
   const jdTokens = significantTokens(jd);
   const resumeTokens = significantTokens(resumeText);
   const similarityPercent = jaccard(jdTokens, resumeTokens);
+  const phraseSummary = formatPhraseOccurrenceSummary(matchedPhraseCount, totalPhraseOccurrences);
 
-  if (similarityPercent >= 0.38 || matchedPhrases.length >= 8) {
+  if (similarityPercent >= 0.38 || matchedPhraseCount >= 8) {
     flags.push({
       severity: "high",
       title: "High JD language overlap",
-      detail: `${Math.round(similarityPercent * 100)}% token overlap with posting; ${matchedPhrases.length} JD phrase(s) appear on resume. Resumes may be AI-tailored to the posting.`,
+      detail: `${Math.round(similarityPercent * 100)}% token overlap with posting; ${phraseSummary}. Resumes may be AI-tailored to the posting.`,
     });
-  } else if (similarityPercent >= 0.28 || matchedPhrases.length >= 5) {
+  } else if (similarityPercent >= 0.28 || matchedPhraseCount >= 5) {
     flags.push({
       severity: "medium",
       title: "Moderate JD mirroring",
-      detail: `${Math.round(similarityPercent * 100)}% overlap; ${matchedPhrases.length} phrase(s) from the JD echoed on the resume. Verify claims in screening.`,
+      detail: `${Math.round(similarityPercent * 100)}% overlap; ${phraseSummary}. Verify claims in screening.`,
     });
-  } else if (matchedPhrases.length >= 3) {
+  } else if (matchedPhraseCount >= 3) {
     flags.push({
       severity: "low",
       title: "Some JD phrasing repeated",
-      detail: `${matchedPhrases.length} requirement phrase(s) appear verbatim—normal for qualified candidates, but confirm depth.`,
+      detail: `${phraseSummary}—normal for qualified candidates, but confirm depth.`,
     });
   }
 
@@ -79,9 +100,60 @@ export function analyzeJdMirroring(resumeText, requisition) {
   return {
     riskLevel,
     similarityPercent: Math.round(similarityPercent * 100),
-    matchedPhrases: matchedPhrases.slice(0, 12),
+    matchedPhrases,
+    matchedPhraseCount,
+    totalPhraseOccurrences,
     flags,
   };
+}
+
+function formatPhraseOccurrenceSummary(phraseCount, occurrenceCount) {
+  const p = phraseCount === 1 ? "phrase" : "phrases";
+  const t = occurrenceCount === 1 ? "time" : "times";
+  return `${phraseCount} JD ${p} found across ${occurrenceCount} ${t} on the resume`;
+}
+
+function countPhraseOccurrences(resumeLower, phraseLower, nearMatch) {
+  const exact = countSubstringOccurrences(resumeLower, phraseLower);
+  if (exact > 0) return exact;
+
+  const tokens = phraseLower.split(/\W+/).filter((w) => w.length > 3);
+  if (tokens.length < 3) return nearMatch ? 1 : 0;
+
+  const probes = [];
+  for (let len = Math.min(4, tokens.length); len >= 3; len--) {
+    for (let i = 0; i <= tokens.length - len; i++) {
+      probes.push(tokens.slice(i, i + len).join(" "));
+    }
+  }
+
+  let best = 0;
+  for (const probe of probes) {
+    if (probe.length < 10) continue;
+    best = Math.max(best, countSubstringOccurrences(resumeLower, probe));
+  }
+  if (best > 0) return best;
+
+  if (!nearMatch) return 0;
+
+  const chunks = resumeLower.split(/[\n.;|•]+/).filter((c) => c.trim().length > 10);
+  let chunkHits = 0;
+  for (const chunk of chunks) {
+    const hit = tokens.filter((t) => chunk.includes(t)).length;
+    if (hit / tokens.length >= 0.85) chunkHits++;
+  }
+  return chunkHits;
+}
+
+function countSubstringOccurrences(haystack, needle) {
+  if (!needle) return 0;
+  let count = 0;
+  let pos = 0;
+  while ((pos = haystack.indexOf(needle, pos)) !== -1) {
+    count++;
+    pos += Math.max(needle.length, 1);
+  }
+  return count;
 }
 
 function collectPhrases(jd, requisition) {
