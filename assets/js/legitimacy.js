@@ -1,6 +1,11 @@
 /** JD echo, intent checklist, and legitimacy tier per criterion. */
 
-import { significantTokens } from "./legitimacy-utils.js";
+import {
+  significantTokens,
+  criterionAnchorTokens,
+  requiresTechnicalAnchors,
+  resumeMeetsTechnicalAnchors,
+} from "./legitimacy-utils.js";
 
 const TOOL_RE =
   /\b(?:primavera|p6|ms\s*project|microsoft\s*project|msp|oracle\s*primavera|scheduling\s*software)\b/i;
@@ -11,7 +16,7 @@ const CONTEXT_RE =
 
 export function analyzeLegitimacy(criterionText, snippet, section, signals, jdRaw, domainPack) {
   const jdEchoPercent = computeJdEchoPercent(criterionText, snippet, jdRaw);
-  const intent = buildIntentChecklist(criterionText, snippet, signals, domainPack);
+  const intent = buildIntentChecklist(criterionText, snippet, signals, domainPack, section);
   const intentMet = intent.filter((i) => i.status === "met").length;
   const intentRequired = intent.filter((i) => i.status !== "na").length;
   const proofMet = intent.filter((i) => i.id.startsWith("proof-") && i.status === "met").length;
@@ -28,15 +33,12 @@ export function analyzeLegitimacy(criterionText, snippet, section, signals, jdRa
     return { tier, label, summary, jdEchoPercent: 0, intent };
   }
 
-  const resume = snippet.toLowerCase();
-  const anchors = criterionAnchorTokens(criterionText);
-  const anchorOnResume = anchors.length === 0 || anchors.some((a) => resume.includes(a));
-
-  if (anchors.length > 0 && !anchorOnResume) {
+  if (requiresTechnicalAnchors(criterionText) && !resumeMeetsTechnicalAnchors(criterionText, snippet)) {
+    const anchors = criterionAnchorTokens(criterionText);
     return {
       tier: "not-on-resume",
       label: "Not stated on resume",
-      summary: `The posting requires this, but the matched resume text does not mention ${anchors.slice(0, 3).join(", ")}. Treat as unverified—do not assume drawing/CAD skill from a scheduler summary alone.`,
+      summary: `Posting requires ${anchors.slice(0, 4).join(", ")}—none appear in the resume text we matched. Scheduler/EPC summary alone does not prove this.`,
       jdEchoPercent: computeResumeEchoPercent(criterionText, snippet),
       intent,
     };
@@ -99,21 +101,7 @@ function computeResumeEchoPercent(criterionText, snippet, jdRaw) {
   return Math.round(Math.min(100, tokenOverlap * 65 + phraseHit * 35));
 }
 
-function criterionAnchorTokens(criterionText) {
-  const lower = criterionText.toLowerCase();
-  if (/drawing|blueprint|cad|autocad|markup|interpret.*engineer/i.test(lower)) {
-    const anchors = [];
-    if (/drawing/i.test(lower)) anchors.push("drawing", "drawings");
-    if (/blueprint/i.test(lower)) anchors.push("blueprint");
-    if (/cad|autocad/i.test(lower)) anchors.push("cad", "autocad");
-    if (/interpret/i.test(lower)) anchors.push("interpret");
-    if (/engineer/i.test(lower)) anchors.push("engineering");
-    return [...new Set(anchors)];
-  }
-  return [];
-}
-
-function buildIntentChecklist(criterionText, snippet, signals, domainPack) {
+function buildIntentChecklist(criterionText, snippet, signals, domainPack, section = "") {
   const resume = (snippet || "").toLowerCase();
   const critLower = criterionText.toLowerCase();
   const signalSet = new Set(signals || []);
@@ -128,10 +116,22 @@ function buildIntentChecklist(criterionText, snippet, signals, domainPack) {
   const activityMet = ACTIVITY_RE.test(resume);
   const contextMet = CONTEXT_RE.test(resume);
 
+  const inExperience = section === "experience";
   const proofItems = [
     { id: "proof-dates", label: "Dates / timeframe", met: signalSet.has("dates") || signalSet.has("tenure") },
-    { id: "proof-employer", label: "Employer / client", met: signalSet.has("employer") },
-    { id: "proof-deliverable", label: "Deliverable / output", met: signalSet.has("deliverable") || signalSet.has("metrics") },
+    {
+      id: "proof-employer",
+      label: "Employer / client",
+      met: inExperience && signalSet.has("employer"),
+    },
+    {
+      id: "proof-deliverable",
+      label: "Deliverable / output",
+      met:
+        inExperience &&
+        (signalSet.has("deliverable") || signalSet.has("metrics")) &&
+        !bareScheduleOnlyDeliverable(criterionText, resume),
+    },
     { id: "proof-project", label: "Project context", met: signalSet.has("project context") },
   ];
 
@@ -169,7 +169,34 @@ function buildIntentChecklist(criterionText, snippet, signals, domainPack) {
     });
   }
 
+  if (/drawing/i.test(critLower)) {
+    checklist.push({
+      id: "req-drawings",
+      label: "Drawings mentioned on resume",
+      status: /\bdrawings?\b/i.test(resume) ? "met" : "missing",
+    });
+  }
+  if (/specification/i.test(critLower)) {
+    checklist.push({
+      id: "req-specs",
+      label: "Specifications mentioned on resume",
+      status: /specifications?/i.test(resume) ? "met" : "missing",
+    });
+  }
+  if (/statements?\s+of\s+work|\bsow\b/i.test(critLower)) {
+    checklist.push({
+      id: "req-sow",
+      label: "Statement of work mentioned on resume",
+      status: /statements?\s+of\s+work|\bsow\b/i.test(resume) ? "met" : "missing",
+    });
+  }
+
   return checklist;
+}
+
+function bareScheduleOnlyDeliverable(criterionText, resume) {
+  if (!/drawing|specification/i.test(criterionText)) return false;
+  return /\bschedule\b/i.test(resume) && !/\bdrawings?\b|specifications?/i.test(resume);
 }
 
 function hasToolKeyword(text, domainPack) {

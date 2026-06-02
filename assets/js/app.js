@@ -363,7 +363,7 @@ function renderScorecard(req, sc) {
   badge.textContent = rec;
   badge.className = `rec-badge rec-${recClass(rec)}`;
 
-  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2.4`;
+  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2.5`;
 
   renderMirroring(sc.mirroring);
   renderCoverage("#must-coverage", sc.mustHaveCoverage, true);
@@ -492,12 +492,12 @@ function renderCoverage(sel, coverage, showSubstantiated) {
 function renderCriterionRow(item) {
   const conf = item.confidence || (item.matched ? "low" : "none");
   const leg = item.legitimacy;
-  const evidenceBlock = item.snippet
-    ? `<div class="evidence-block">
-        <p class="evidence-label">Resume evidence for this rating${item.sectionLabel ? ` · ${escapeHtml(item.sectionLabel)}` : ""}:</p>
-        <p class="snippet">“${escapeHtml(item.snippet.slice(0, 220))}${item.snippet.length > 220 ? "…" : ""}”</p>
-      </div>`
-    : `<p class="evidence-label muted">No resume excerpt matched this requirement.</p>`;
+      const evidenceBlock = item.snippet
+        ? `<div class="evidence-block">
+            <p class="evidence-label">${item.incidentalSnippet ? "Closest incidental text (requirement not stated)" : "Resume evidence for this rating"}${item.sectionLabel ? ` · ${escapeHtml(item.sectionLabel)}` : ""}:</p>
+            <p class="snippet">“${escapeHtml(item.snippet.slice(0, 220))}${item.snippet.length > 220 ? "…" : ""}”</p>
+          </div>`
+        : `<p class="evidence-label muted">No resume excerpt matched this requirement.</p>`;
 
   const legBlock = leg
     ? `<div class="legitimacy-block">

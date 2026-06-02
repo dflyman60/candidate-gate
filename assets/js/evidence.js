@@ -1,6 +1,11 @@
 /** Evidence depth and resume structure analysis. */
 
 import { analyzeLegitimacy } from "./legitimacy.js";
+import {
+  requiresTechnicalAnchors,
+  resumeMeetsTechnicalAnchors,
+  criterionAnchorTokens,
+} from "./legitimacy-utils.js";
 
 const DATE_RE = /\b(?:19|20)\d{2}\s*[-–—]\s*(?:19|20)\d{2}\b|\b(?:19|20)\d{2}\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b/i;
 const YEARS_RE = /\b\d{1,2}\+?\s*(?:years?|yrs?)\b/i;
@@ -62,7 +67,7 @@ export function findBestSnippet(resumeText, criterionText, domainPack) {
     if (matchedTokens.length === 0) continue;
     const score = matchedTokens.length / keywords.length;
     const section = inferSection(resumeText, sentence);
-    const signals = detectEvidenceSignals(sentence);
+    const signals = detectEvidenceSignals(sentence, section);
     const overlap = meaningfulOverlap(criterionText, sentence);
     const phrase = phraseOverlapInSnippet(criterionText, sentence);
     candidates.push({
@@ -79,7 +84,12 @@ export function findBestSnippet(resumeText, criterionText, domainPack) {
   if (!candidates.length) return null;
 
   const viable = candidates.filter((c) => passesMatchQuality(criterionText, c));
-  const pool = viable.length ? viable : [];
+  let pool = viable.filter((c) => {
+    if (!requiresTechnicalAnchors(criterionText)) return true;
+    if (!resumeMeetsTechnicalAnchors(criterionText, c.snippet)) return false;
+    if (c.section === "experience") return true;
+    return Boolean(c.phrase) || c.overlap >= 0.45;
+  });
 
   if (!pool.length) return null;
 
@@ -101,7 +111,12 @@ export function findBestSnippet(resumeText, criterionText, domainPack) {
 
 function passesMatchQuality(criterionText, candidate) {
   const { snippet, score, matchedTokens, overlap, phrase } = candidate;
-  if (requiresDomainAnchor(criterionText) && !domainAnchorInSnippet(criterionText, snippet)) {
+  if (requiresTechnicalAnchors(criterionText) && !resumeMeetsTechnicalAnchors(criterionText, snippet)) {
+    return false;
+  }
+  if (requiresTechnicalAnchors(criterionText)) {
+    if (phrase && resumeMeetsTechnicalAnchors(criterionText, snippet)) return true;
+    if (technicalAnchorOverlap(criterionText, snippet) >= 0.34) return true;
     return false;
   }
   if (phrase) return true;
@@ -113,14 +128,12 @@ function passesMatchQuality(criterionText, candidate) {
   return score >= 0.5 && strongHits.length >= 1;
 }
 
-function requiresDomainAnchor(criterionText) {
-  return /drawing|blueprint|cad|autocad|interpret.*(?:drawing|engineer)/i.test(criterionText);
-}
-
-function domainAnchorInSnippet(criterionText, snippet) {
-  const lower = (snippet || "").toLowerCase();
-  if (/drawing/i.test(criterionText)) return /\bdrawings?\b|blueprint|cad|autocad|markup/i.test(lower);
-  return true;
+function technicalAnchorOverlap(criterionText, snippet) {
+  const anchors = criterionAnchorTokens(criterionText);
+  if (!anchors.length) return 0;
+  const resume = (snippet || "").toLowerCase();
+  const hits = anchors.filter((a) => resume.includes(a)).length;
+  return hits / anchors.length;
 }
 
 export function isBoilerplateCriterion(text) {
@@ -186,21 +199,26 @@ export function assessCriterionEvidence(resumeText, criterionText, domainPack, j
   const matched = confidence !== "none";
   const legitimacy = analyzeLegitimacy(criterionText, snippet, section, signals, jdRaw, domainPack);
   const phraseOnResume = phrase || phraseOverlapInSnippet(criterionText, snippet);
+  const notStatedOnResume = legitimacy.tier === "not-on-resume";
 
   return {
     text: criterionText,
-    matched,
-    confidence,
-    confidenceLabel: confidenceLabel(confidence, section, snippet),
-    snippet,
+    matched: notStatedOnResume ? false : matched,
+    confidence: notStatedOnResume ? "none" : confidence,
+    confidenceLabel: notStatedOnResume
+      ? "Not stated on resume"
+      : confidenceLabel(confidence, section, snippet),
+    snippet: notStatedOnResume ? snippet : snippet,
+    incidentalSnippet: notStatedOnResume,
     section,
     sectionLabel: sectionLabel(section, snippet),
     signals,
     matchedTokens: matchedTokens || [],
-    phraseOnResume,
+    phraseOnResume: notStatedOnResume ? null : phraseOnResume,
     verificationQuestion: buildVerificationQuestion(criterionText, snippet, legitimacy, {
-      phraseOnResume,
+      phraseOnResume: notStatedOnResume ? null : phraseOnResume,
       matchedTokens,
+      notStatedOnResume,
     }),
     legitimacy,
   };
@@ -242,11 +260,11 @@ function isLikelyHeaderBlock(text) {
   return false;
 }
 
-function detectEvidenceSignals(text) {
+function detectEvidenceSignals(text, section = "") {
   const signals = [];
   if (DATE_RE.test(text)) signals.push("dates");
   if (YEARS_RE.test(text)) signals.push("tenure");
-  if (EMPLOYER_RE.test(text)) signals.push("employer");
+  if (section === "experience" && EMPLOYER_RE.test(text)) signals.push("employer");
   if (PROJECT_RE.test(text)) signals.push("project context");
   if (DELIVERABLE_RE.test(text)) signals.push("deliverable");
   if (METRICS_RE.test(text)) signals.push("metrics");
@@ -350,6 +368,9 @@ function buildVerificationQuestion(criterionText, snippet, legitimacy, meta = {}
   }
   if (legitimacy?.tier === "likely-mirrored") {
     return `The posting requires "${topic}" but the resume only shows overlapping language, not job-level proof. Name employer, project dates, schedule size, and one deliverable—without reading the resume.`;
+  }
+  if (meta.notStatedOnResume) {
+    return `Posting requires: "${topic}". The resume does not state drawings, specifications, or SOW analysis—only general scheduler/EPC language. Ask for a project where they reviewed drawings and specs to build a baseline schedule.`;
   }
   if (legitimacy?.tier === "self-reported") {
     if (phraseOnResume) {
