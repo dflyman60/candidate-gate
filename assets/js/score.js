@@ -1,5 +1,10 @@
 import { summarizeResumeClaims } from "./resume-parse.js";
-import { assessCriterionEvidence, runConsistencyChecks, confidenceWeight } from "./evidence.js";
+import {
+  assessCriterionEvidence,
+  runConsistencyChecks,
+  confidenceWeight,
+  isBoilerplateCriterion,
+} from "./evidence.js";
 import { analyzeJdMirroring, mirroringPenalty } from "./mirroring.js";
 import { legitimacyWeight } from "./legitimacy.js";
 
@@ -54,7 +59,7 @@ export function scoreCandidate(resumeText, requisition, domainPack) {
   return {
     overall,
     recommendation,
-    scoringVersion: "2.2",
+    scoringVersion: "2.3",
     mustHaveCoverage: coverageSummary(mustResults, mustWeighted),
     preferredCoverage: coverageSummary(prefResults, prefWeighted),
     dealBreakerRisks: dealResults.filter((r) => r.risk),
@@ -173,6 +178,9 @@ function buildScreenKit(mustResults, prefResults, mirroring) {
     question: r.verificationQuestion,
     snippet: r.snippet,
     sectionLabel: r.sectionLabel,
+    matchedTokens: r.matchedTokens,
+    phraseOnResume: r.phraseOnResume,
+    notOnResume: !r.snippet || (isBoilerplateCriterion(r.text) && !r.phraseOnResume),
   }));
 
   let primaryQuestion = questions[0]?.question;

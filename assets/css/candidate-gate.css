@@ -525,9 +525,25 @@ textarea {
   margin-bottom: 14px;
 }
 
-.screen-kit-item strong {
+.screen-kit-item .criterion-text {
   display: block;
-  margin: 6px 0 4px;
+  margin: 4px 0 8px;
+  font-weight: 600;
+}
+
+.screen-kit-question {
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+
+.leg-not-on-resume {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.match-note {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
 }
 
 #screen-kit-list {

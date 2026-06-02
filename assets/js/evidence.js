@@ -12,6 +12,15 @@ const DELIVERABLE_RE = /\b(?:baseline|recovery\s*schedule|schedule\s*update|cost
 const SKILLS_SECTION_RE = /^(?:skills|technical\s*skills|competencies|core\s*competencies|tools|software)\s*:?\s*$/i;
 const SUMMARY_SECTION_RE = /^(?:summary|profile|objective|professional\s*summary)\s*:?\s*$/i;
 
+const BOILERPLATE_CRITERION_RE =
+  /(?:be\s+)?responsible\s+for|departmental\s+duties|as\s+necessary|other\s+(?:duties|assignments)|perform\s+other|equal\s+opportunity|eeo|work\s+environment/i;
+
+const WEAK_MATCH_TOKENS = new Set([
+  "responsible", "special", "other", "departmental", "duties", "necessary", "various",
+  "assist", "support", "help", "ensure", "ability", "skills", "including", "related",
+  "assigned", "general", "additional", "various", "flexible", "team", "work",
+]);
+
 export function splitResumeSegments(resumeText) {
   const lines = resumeText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const segments = [];
@@ -48,24 +57,97 @@ export function findBestSnippet(resumeText, criterionText, domainPack) {
 
   for (const sentence of sentences) {
     const lower = sentence.toLowerCase();
-    const hitCount = keywords.filter((k) => lower.includes(k)).length;
-    if (hitCount === 0) continue;
-    const score = hitCount / keywords.length;
+    const matchedTokens = keywords.filter((k) => tokenMatchInText(k, lower));
+    if (matchedTokens.length === 0) continue;
+    const score = matchedTokens.length / keywords.length;
     const section = inferSection(resumeText, sentence);
     const signals = detectEvidenceSignals(sentence);
-    candidates.push({ snippet: sentence.trim(), score, section, signals });
+    const overlap = meaningfulOverlap(criterionText, sentence);
+    const phrase = phraseOverlapInSnippet(criterionText, sentence);
+    candidates.push({
+      snippet: sentence.trim(),
+      score,
+      section,
+      signals,
+      matchedTokens,
+      overlap,
+      phrase,
+    });
   }
 
   if (!candidates.length) return null;
 
-  const expMatches = candidates.filter((c) => c.section === "experience");
+  const viable = candidates.filter((c) => passesMatchQuality(criterionText, c));
+  const pool = viable.length ? viable : [];
+
+  if (!pool.length) return null;
+
+  const expMatches = pool.filter((c) => c.section === "experience");
+  const sortFn = (a, b) =>
+    b.overlap - a.overlap ||
+    (b.phrase ? 1 : 0) - (a.phrase ? 1 : 0) ||
+    b.signals.length - a.signals.length ||
+    b.score - a.score;
+
   if (expMatches.length) {
-    expMatches.sort((a, b) => b.signals.length - a.signals.length || b.score - a.score);
+    expMatches.sort(sortFn);
     return expMatches[0];
   }
 
-  candidates.sort((a, b) => b.signals.length - a.signals.length || b.score - a.score);
-  return candidates[0];
+  pool.sort(sortFn);
+  return pool[0];
+}
+
+function passesMatchQuality(criterionText, candidate) {
+  const { snippet, score, matchedTokens, overlap, phrase } = candidate;
+  if (phrase) return true;
+  if (overlap >= 0.34) return true;
+  if (isBoilerplateCriterion(criterionText)) return false;
+  const strongHits = matchedTokens.filter((t) => !WEAK_MATCH_TOKENS.has(t));
+  if (strongHits.length >= 2) return true;
+  if (strongHits.length >= 1 && score >= 0.45) return true;
+  return score >= 0.5 && strongHits.length >= 1;
+}
+
+export function isBoilerplateCriterion(text) {
+  return BOILERPLATE_CRITERION_RE.test(text);
+}
+
+function meaningfulOverlap(criterionText, snippet) {
+  const crit = significantTokens(criterionText).filter((t) => !WEAK_MATCH_TOKENS.has(t));
+  if (!crit.length) return 0;
+  const snip = snippet.toLowerCase();
+  const hits = crit.filter((t) => tokenMatchInText(t, snip));
+  return hits.length / crit.length;
+}
+
+function phraseOverlapInSnippet(criterionText, snippet) {
+  const words = criterionText
+    .toLowerCase()
+    .split(/\W+/)
+    .filter((w) => w.length > 2 && !WEAK_MATCH_TOKENS.has(w));
+  const snip = snippet.toLowerCase();
+  for (let len = Math.min(words.length, 5); len >= 2; len--) {
+    for (let i = 0; i <= words.length - len; i++) {
+      const phrase = words.slice(i, i + len).join(" ");
+      if (phrase.length >= 10 && snip.includes(phrase)) return phrase;
+    }
+  }
+  return null;
+}
+
+function tokenMatchInText(token, textLower) {
+  if (!token || token.length < 3) return false;
+  if (textLower.includes(token)) return true;
+  if (token.endsWith("s") && token.length > 4 && textLower.includes(token.slice(0, -1))) {
+    const stem = token.slice(0, -1);
+    return new RegExp(`\\b${escapeRegex(stem)}\\b`).test(textLower);
+  }
+  return false;
+}
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function assessCriterionEvidence(resumeText, criterionText, domainPack, jdRaw = "") {
@@ -85,10 +167,11 @@ export function assessCriterionEvidence(resumeText, criterionText, domainPack, j
     };
   }
 
-  const { snippet, section, signals } = snippetResult;
+  const { snippet, section, signals, matchedTokens, phrase } = snippetResult;
   const confidence = scoreConfidence(section, signals, snippet);
   const matched = confidence !== "none";
   const legitimacy = analyzeLegitimacy(criterionText, snippet, section, signals, jdRaw, domainPack);
+  const phraseOnResume = phrase || phraseOverlapInSnippet(criterionText, snippet);
 
   return {
     text: criterionText,
@@ -99,7 +182,12 @@ export function assessCriterionEvidence(resumeText, criterionText, domainPack, j
     section,
     sectionLabel: sectionLabel(section, snippet),
     signals,
-    verificationQuestion: buildVerificationQuestion(criterionText, snippet, legitimacy),
+    matchedTokens: matchedTokens || [],
+    phraseOnResume,
+    verificationQuestion: buildVerificationQuestion(criterionText, snippet, legitimacy, {
+      phraseOnResume,
+      matchedTokens,
+    }),
     legitimacy,
   };
 }
@@ -235,18 +323,30 @@ export function runConsistencyChecks(resumeText, mustResults, requisition) {
   return flags;
 }
 
-function buildVerificationQuestion(criterionText, snippet, legitimacy) {
+function buildVerificationQuestion(criterionText, snippet, legitimacy, meta = {}) {
   const topic = criterionText.replace(/\.$/, "");
   if (!snippet) {
-    return `I don't see clear evidence for "${topic}". Describe a specific project—client, dates, your role, tools used, and a deliverable you owned.`;
+    return `This job requirement is not clearly supported on the resume: "${topic}". Ask for a specific role, employer, dates, and deliverable.`;
+  }
+  const phraseOnResume = meta.phraseOnResume;
+  const weakOnly =
+    isBoilerplateCriterion(criterionText) && !phraseOnResume;
+  if (weakOnly) {
+    return `The posting includes "${topic}", but that wording does not appear on the resume (any match is incidental). Ask where they performed this duty, with which employer, and what they delivered.`;
   }
   if (legitimacy?.tier === "likely-mirrored") {
-    return `Your resume echoes the posting for "${topic}" but doesn't show job-level proof. Name the employer, project dates, schedule size, and one deliverable you personally produced—without reading the resume.`;
+    return `The posting requires "${topic}" but the resume only shows overlapping language, not job-level proof. Name employer, project dates, schedule size, and one deliverable—without reading the resume.`;
   }
   if (legitimacy?.tier === "self-reported") {
-    return `"${topic}" appears as a claim in your summary/header. Which role and employer was this on, and what did you deliver using that skill?`;
+    if (phraseOnResume) {
+      return `The resume states something related to "${topic}" in a summary/header area. Which role and employer was this, and what did you deliver?`;
+    }
+    const hint = meta.matchedTokens?.length
+      ? ` (resume only loosely overlaps on: ${meta.matchedTokens.slice(0, 3).join(", ")})`
+      : "";
+    return `The posting requires "${topic}", but the resume does not state this clearly${hint}. Ask which job this applied to and for concrete examples.`;
   }
-  return `Your resume mentions "${topic}" (${snippet.slice(0, 80)}…). Walk me through that project: schedule size, update cadence, software version, and who validated your work.`;
+  return `Regarding "${topic}" (resume: ${snippet.slice(0, 80)}…): walk through project scope, schedule size, update cadence, software used, and who validated your work.`;
 }
 
 function confidenceLabel(c, section, snippet) {

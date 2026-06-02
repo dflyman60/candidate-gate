@@ -363,7 +363,7 @@ function renderScorecard(req, sc) {
   badge.textContent = rec;
   badge.className = `rec-badge rec-${recClass(rec)}`;
 
-  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2.2`;
+  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2.3`;
 
   renderMirroring(sc.mirroring);
   renderCoverage("#must-coverage", sc.mustHaveCoverage, true);
@@ -387,9 +387,15 @@ function renderScorecard(req, sc) {
       <li class="screen-kit-item">
         <span class="conf-badge conf-${q.confidence}">${escapeHtml(q.confidence)}</span>
         ${q.legitimacy ? `<span class="leg-badge leg-${legClass(q.legitimacy)}">${escapeHtml(q.legitimacy)}</span>` : ""}
-        <strong>${escapeHtml(q.criterion)}</strong>
-        <p>${escapeHtml(q.question)}</p>
-        ${q.snippet ? `<p class="evidence-label">Resume evidence · ${escapeHtml(q.sectionLabel || "matched text")}:</p><p class="muted snippet">“${escapeHtml(q.snippet.slice(0, 120))}${q.snippet.length > 120 ? "…" : ""}”</p>` : ""}
+        ${q.notOnResume ? `<span class="leg-badge leg-not-on-resume">Not on resume</span>` : ""}
+        <p class="evidence-label">Requisition requirement (from job description)</p>
+        <strong class="criterion-text">${escapeHtml(q.criterion)}</strong>
+        <p class="screen-kit-question">${escapeHtml(q.question)}</p>
+        ${q.snippet
+          ? `<p class="evidence-label">Closest resume text (may not state this requirement) · ${escapeHtml(q.sectionLabel || "matched text")}:</p>
+             <p class="muted snippet">“${escapeHtml(q.snippet.slice(0, 120))}${q.snippet.length > 120 ? "…" : ""}”</p>
+             ${q.matchedTokens?.length ? `<p class="muted match-note">Loose keyword overlap: ${escapeHtml(q.matchedTokens.join(", "))}</p>` : ""}`
+          : `<p class="evidence-label muted">This wording does not appear on the resume.</p>`}
       </li>`
       )
       .join("");
@@ -508,6 +514,7 @@ function renderCriterionRow(item) {
         <span class="conf-badge conf-${conf}">${escapeHtml(item.confidenceLabel || conf)}</span>
       </div>
       <div class="coverage-item-body">
+        <p class="evidence-label">Requisition requirement</p>
         <span class="criterion-text">${escapeHtml(item.text)}</span>
         ${evidenceBlock}
         ${legBlock}
