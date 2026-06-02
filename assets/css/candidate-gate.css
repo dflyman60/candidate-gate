@@ -388,13 +388,39 @@ textarea {
   align-items: flex-start;
 }
 
-.coverage-item-body {
-  flex: 1;
+.criterion-text {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.evidence-label {
+  margin: 8px 0 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.evidence-block {
+  margin-top: 4px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border-left: 3px solid #cbd5e1;
+  border-radius: 0 6px 6px 0;
 }
 
 .coverage-item .snippet {
-  margin: 4px 0 0;
-  font-size: 0.82rem;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text);
+  font-style: italic;
+  line-height: 1.45;
+}
+
+.coverage-item-body {
+  flex: 1;
 }
 
 .screen-kit-item {

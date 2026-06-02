@@ -147,6 +147,7 @@ function buildScreenKit(mustResults, prefResults, mirroring) {
     confidence: r.confidence,
     question: r.verificationQuestion,
     snippet: r.snippet,
+    sectionLabel: r.sectionLabel,
   }));
 
   let primaryQuestion = questions[0]?.question;

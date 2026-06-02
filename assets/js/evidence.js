@@ -42,7 +42,7 @@ export function splitResumeSegments(resumeText) {
 export function findBestSnippet(resumeText, criterionText, domainPack) {
   const keywords = expandSearchTerms(criterionText, domainPack);
   const sentences = extractSentences(resumeText);
-  let best = null;
+  const candidates = [];
 
   for (const sentence of sentences) {
     const lower = sentence.toLowerCase();
@@ -51,12 +51,19 @@ export function findBestSnippet(resumeText, criterionText, domainPack) {
     const score = hitCount / keywords.length;
     const section = inferSection(resumeText, sentence);
     const signals = detectEvidenceSignals(sentence);
-    if (!best || score > best.score || (score === best.score && signals.length > best.signals.length)) {
-      best = { snippet: sentence.trim(), score, section, signals };
-    }
+    candidates.push({ snippet: sentence.trim(), score, section, signals });
   }
 
-  return best;
+  if (!candidates.length) return null;
+
+  const expMatches = candidates.filter((c) => c.section === "experience");
+  if (expMatches.length) {
+    expMatches.sort((a, b) => b.signals.length - a.signals.length || b.score - a.score);
+    return expMatches[0];
+  }
+
+  candidates.sort((a, b) => b.signals.length - a.signals.length || b.score - a.score);
+  return candidates[0];
 }
 
 export function assessCriterionEvidence(resumeText, criterionText, domainPack) {
@@ -75,36 +82,56 @@ export function assessCriterionEvidence(resumeText, criterionText, domainPack) {
   }
 
   const { snippet, section, signals } = snippetResult;
-  const confidence = scoreConfidence(section, signals, snippet, criterionText);
+  const confidence = scoreConfidence(section, signals, snippet);
   const matched = confidence !== "none";
 
   return {
     text: criterionText,
     matched,
     confidence,
-    confidenceLabel: confidenceLabel(confidence),
+    confidenceLabel: confidenceLabel(confidence, section, snippet),
     snippet,
     section,
+    sectionLabel: sectionLabel(section, snippet),
     signals,
     verificationQuestion: buildVerificationQuestion(criterionText, snippet),
   };
 }
 
-function scoreConfidence(section, signals, snippet, criterionText) {
+function scoreConfidence(section, signals, snippet) {
   const signalCount = signals.length;
-  const inSkillsOnly = section === "skills";
-  const inSummaryOnly = section === "summary" && signalCount < 2;
+  const headerLike = section === "summary" || section === "header" || isLikelyHeaderBlock(snippet);
 
-  if (inSkillsOnly && signalCount === 0) return "low";
-  if (inSummaryOnly) return "low";
+  if (section === "skills") {
+    return signalCount > 0 ? "low" : "none";
+  }
 
-  if (signalCount >= 2) return "high";
-  if (signalCount === 1 && section === "experience") return "medium";
-  if (signalCount === 1) return "medium";
-  if (section === "skills" || section === "summary") return "low";
+  if (headerLike) {
+    return signalCount > 0 || significantTokens(snippet).length > 0 ? "low" : "none";
+  }
 
-  const hasKeyword = significantTokens(criterionText).some((t) => snippet.toLowerCase().includes(t));
-  return hasKeyword ? "low" : "none";
+  if (section === "experience") {
+    const hasStrong = signals.some((s) =>
+      ["employer", "dates", "deliverable", "project context", "metrics"].includes(s)
+    );
+    if (signalCount >= 2 && hasStrong) return "high";
+    if (signalCount >= 1 && hasStrong) return "medium";
+    if (signalCount >= 1) return "medium";
+    return "low";
+  }
+
+  if (signalCount >= 2) return "medium";
+  if (signalCount >= 1) return "medium";
+  return "low";
+}
+
+function isLikelyHeaderBlock(text) {
+  if (!text) return false;
+  if (/@\w+\.\w+/.test(text)) return true;
+  if (/\b\d{3}[-.\s)]?\s*\d{3}[-.\s]\d{4}\b/.test(text)) return true;
+  const head = text.slice(0, 100);
+  if (/(?:PROJECT\s+SCHEDULER|SCHEDULER|COST\s+ENGINEER)/i.test(head) && text.length < 350) return true;
+  return false;
 }
 
 function detectEvidenceSignals(text) {
@@ -121,7 +148,8 @@ function detectEvidenceSignals(text) {
 function inferSection(resumeText, sentence) {
   const idx = resumeText.indexOf(sentence);
   if (idx < 0) return "body";
-  if (idx < 500) return "summary";
+  if (idx < 400 || isLikelyHeaderBlock(sentence)) return "header";
+  if (idx < 700) return "summary";
   const before = resumeText.slice(0, idx).toLowerCase();
   const skillsIdx = Math.max(before.lastIndexOf("skills"), before.lastIndexOf("competencies"));
   const expIdx = Math.max(
@@ -209,8 +237,27 @@ function buildVerificationQuestion(criterionText, snippet) {
   return `Your resume mentions "${topic}" (${snippet.slice(0, 80)}…). Walk me through that project: schedule size, update cadence, software version, and who validated your work.`;
 }
 
-function confidenceLabel(c) {
-  return { high: "High — substantiated", medium: "Medium — partial context", low: "Low — keyword only", none: "Not found" }[c] || c;
+function confidenceLabel(c, section, snippet) {
+  if (c === "low" && (section === "header" || section === "summary" || isLikelyHeaderBlock(snippet))) {
+    return "Low — header/summary claim";
+  }
+  if (c === "low" && section === "skills") {
+    return "Low — skills list only";
+  }
+  return {
+    high: "High — substantiated",
+    medium: "Medium — partial context",
+    low: "Low — keyword only",
+    none: "Not found",
+  }[c] || c;
+}
+
+function sectionLabel(section, snippet) {
+  if (section === "experience") return "Experience section";
+  if (section === "skills") return "Skills section";
+  if (section === "header" || isLikelyHeaderBlock(snippet)) return "Header / contact block";
+  if (section === "summary") return "Summary section";
+  return "Resume body";
 }
 
 function extractSentences(text) {

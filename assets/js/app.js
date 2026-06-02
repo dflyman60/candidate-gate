@@ -363,7 +363,7 @@ function renderScorecard(req, sc) {
   badge.textContent = rec;
   badge.className = `rec-badge rec-${recClass(rec)}`;
 
-  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2`;
+  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2.1`;
 
   renderMirroring(sc.mirroring);
   renderCoverage("#must-coverage", sc.mustHaveCoverage, true);
@@ -388,7 +388,7 @@ function renderScorecard(req, sc) {
         <span class="conf-badge conf-${q.confidence}">${escapeHtml(q.confidence)}</span>
         <strong>${escapeHtml(q.criterion)}</strong>
         <p>${escapeHtml(q.question)}</p>
-        ${q.snippet ? `<p class="muted snippet">Resume: “${escapeHtml(q.snippet.slice(0, 120))}${q.snippet.length > 120 ? "…" : ""}”</p>` : ""}
+        ${q.snippet ? `<p class="evidence-label">Resume evidence · ${escapeHtml(q.sectionLabel || "matched text")}:</p><p class="muted snippet">“${escapeHtml(q.snippet.slice(0, 120))}${q.snippet.length > 120 ? "…" : ""}”</p>` : ""}
       </li>`
       )
       .join("");
@@ -478,12 +478,18 @@ function renderCoverage(sel, coverage, showSubstantiated) {
   const items = (coverage.items || [])
     .map((item) => {
       const conf = item.confidence || (item.matched ? "low" : "none");
+      const evidenceBlock = item.snippet
+        ? `<div class="evidence-block">
+            <p class="evidence-label">Resume evidence for this rating${item.sectionLabel ? ` · ${escapeHtml(item.sectionLabel)}` : ""}:</p>
+            <p class="snippet">“${escapeHtml(item.snippet.slice(0, 220))}${item.snippet.length > 220 ? "…" : ""}”</p>
+          </div>`
+        : `<p class="evidence-label muted">No resume excerpt matched this requirement.</p>`;
       return `
     <div class="coverage-item conf-${conf}">
       <span class="conf-badge conf-${conf}">${escapeHtml(item.confidenceLabel || conf)}</span>
       <div class="coverage-item-body">
-        <span>${escapeHtml(item.text)}</span>
-        ${item.snippet ? `<p class="muted snippet">“${escapeHtml(item.snippet.slice(0, 140))}${item.snippet.length > 140 ? "…" : ""}”</p>` : ""}
+        <span class="criterion-text">${escapeHtml(item.text)}</span>
+        ${evidenceBlock}
       </div>
     </div>`;
     })
