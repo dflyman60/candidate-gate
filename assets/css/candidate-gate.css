@@ -275,15 +275,149 @@ textarea {
   border-radius: 4px;
 }
 
-.coverage-item {
-  display: flex;
-  gap: 8px;
-  font-size: 0.88rem;
-  padding: 4px 0;
+.score-disclaimer {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid var(--border);
 }
 
-.coverage-item.miss {
-  color: var(--muted);
+.mirror-summary {
+  padding: 12px 14px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+}
+
+.mirror-high {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.mirror-medium {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.mirror-low,
+.mirror-none {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.mirror-unknown {
+  background: #f8fafc;
+}
+
+.flag-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+  border: 1px solid var(--border);
+}
+
+.flag-item strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.flag-high {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.flag-medium {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.flag-low {
+  background: #f8fafc;
+}
+
+.mirror-phrases {
+  margin-top: 10px;
+  font-size: 0.85rem;
+}
+
+.mirror-phrases ul {
+  margin: 8px 0 0;
+  padding-left: 1.2rem;
+}
+
+.conf-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
+.conf-high {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.conf-medium {
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+.conf-low {
+  background: #ffedd5;
+  color: #9a3412;
+}
+
+.conf-none {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.coverage-item {
+  display: flex;
+  gap: 10px;
+  font-size: 0.88rem;
+  padding: 10px 0;
+  border-bottom: 1px solid #f1f5f9;
+  align-items: flex-start;
+}
+
+.coverage-item-body {
+  flex: 1;
+}
+
+.coverage-item .snippet {
+  margin: 4px 0 0;
+  font-size: 0.82rem;
+}
+
+.screen-kit-item {
+  margin-bottom: 14px;
+}
+
+.screen-kit-item strong {
+  display: block;
+  margin: 6px 0 4px;
+}
+
+#screen-kit-list {
+  margin: 12px 0 0;
+  padding-left: 1.2rem;
+}
+
+#screening-question {
+  font-size: 1rem;
+  padding: 14px;
+  background: #f0fdfa;
+  border: 1px solid #99f6e4;
+  border-radius: 8px;
+  font-weight: 600;
 }
 
 .risk-item {
@@ -303,14 +437,6 @@ textarea {
 #claim-summary {
   margin: 0;
   padding-left: 1.2rem;
-}
-
-#screening-question {
-  font-size: 1rem;
-  padding: 14px;
-  background: #f0fdfa;
-  border: 1px solid #99f6e4;
-  border-radius: 8px;
 }
 
 .view-nav {

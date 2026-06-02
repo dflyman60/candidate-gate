@@ -363,27 +363,12 @@ function renderScorecard(req, sc) {
   badge.textContent = rec;
   badge.className = `rec-badge rec-${recClass(rec)}`;
 
-  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)}`;
+  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2`;
 
-  renderCoverage("#must-coverage", sc.mustHaveCoverage);
-  renderCoverage("#pref-coverage", sc.preferredCoverage);
-
-  const dealEl = $("#deal-risks");
-  if (dealEl) {
-    if (!sc.dealBreakerRisks.length) {
-      dealEl.innerHTML = `<p class="muted">No deal-breaker risk flags triggered.</p>`;
-    } else {
-      dealEl.innerHTML = sc.dealBreakerRisks
-        .map(
-          (d) => `
-        <div class="risk-item">
-          <strong>${escapeHtml(d.text)}</strong>
-          <span>${escapeHtml(d.reason)}</span>
-        </div>`
-        )
-        .join("");
-    }
-  }
+  renderMirroring(sc.mirroring);
+  renderCoverage("#must-coverage", sc.mustHaveCoverage, true);
+  renderCoverage("#pref-coverage", sc.preferredCoverage, false);
+  renderFlags(sc);
 
   const claims = $("#claim-summary");
   if (claims) {
@@ -393,21 +378,115 @@ function renderScorecard(req, sc) {
   }
 
   $("#screening-question").textContent = sc.suggestedScreeningQuestion;
+
+  const kitList = $("#screen-kit-list");
+  if (kitList && sc.screenKit?.questions?.length) {
+    kitList.innerHTML = sc.screenKit.questions
+      .map(
+        (q) => `
+      <li class="screen-kit-item">
+        <span class="conf-badge conf-${q.confidence}">${escapeHtml(q.confidence)}</span>
+        <strong>${escapeHtml(q.criterion)}</strong>
+        <p>${escapeHtml(q.question)}</p>
+        ${q.snippet ? `<p class="muted snippet">Resume: “${escapeHtml(q.snippet.slice(0, 120))}${q.snippet.length > 120 ? "…" : ""}”</p>` : ""}
+      </li>`
+      )
+      .join("");
+  } else if (kitList) {
+    kitList.innerHTML = "";
+  }
 }
 
-function renderCoverage(sel, coverage) {
+function renderMirroring(mirroring) {
+  const el = $("#mirroring-panel");
+  if (!el || !mirroring) return;
+
+  const riskClass = `mirror-${mirroring.riskLevel || "none"}`;
+  let html = `
+    <div class="mirror-summary ${riskClass}">
+      <strong>Tailoring risk: ${escapeHtml(mirroring.riskLevel || "unknown")}</strong>
+      <span class="muted"> · ${mirroring.similarityPercent ?? 0}% JD token overlap</span>
+    </div>`;
+
+  if (mirroring.flags?.length) {
+    html += mirroring.flags
+      .map(
+        (f) => `
+      <div class="flag-item flag-${f.severity}">
+        <strong>${escapeHtml(f.title)}</strong>
+        <span>${escapeHtml(f.detail)}</span>
+      </div>`
+      )
+      .join("");
+  }
+
+  if (mirroring.matchedPhrases?.length) {
+    html += `<details class="mirror-phrases"><summary>Matched JD phrases (${mirroring.matchedPhrases.length})</summary><ul>`;
+    html += mirroring.matchedPhrases.map((p) => `<li>${escapeHtml(p)}</li>`).join("");
+    html += `</ul></details>`;
+  }
+
+  el.innerHTML = html;
+}
+
+function renderFlags(sc) {
+  const dealEl = $("#deal-risks");
+  if (!dealEl) return;
+
+  const items = [
+    ...(sc.dealBreakerRisks || []).map((d) => ({
+      severity: "high",
+      title: d.text,
+      detail: d.reason,
+    })),
+    ...(sc.consistencyFlags || []),
+  ];
+
+  const unique = [];
+  const seen = new Set();
+  for (const item of items) {
+    const key = item.title + item.detail;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(item);
+  }
+
+  if (!unique.length) {
+    dealEl.innerHTML = `<p class="muted">No deal-breaker or consistency flags triggered.</p>`;
+    return;
+  }
+
+  dealEl.innerHTML = unique
+    .map(
+      (f) => `
+    <div class="flag-item flag-${f.severity}">
+      <strong>${escapeHtml(f.title)}</strong>
+      <span>${escapeHtml(f.detail)}</span>
+    </div>`
+    )
+    .join("");
+}
+
+function renderCoverage(sel, coverage, showSubstantiated) {
   const el = $(sel);
   if (!el) return;
   const bar = `<div class="coverage-bar"><div class="coverage-fill" style="width:${coverage.percent}%"></div></div>`;
-  const summary = `<p><strong>${coverage.percent}%</strong> · ${coverage.matched} of ${coverage.total} matched</p>`;
+  const sub = showSubstantiated
+    ? ` · <strong>${coverage.substantiatedPercent}%</strong> high-confidence`
+    : "";
+  const summary = `<p><strong>${coverage.percent}%</strong> evidence-weighted${sub} · ${coverage.high} high · ${coverage.medium} medium · ${coverage.low} keyword-only</p>`;
   const items = (coverage.items || [])
-    .map(
-      (item) => `
-    <div class="coverage-item ${item.matched ? "matched" : "miss"}">
-      <span>${item.matched ? "✓" : "○"}</span>
-      <span>${escapeHtml(item.text)}</span>
-    </div>`
-    )
+    .map((item) => {
+      const conf = item.confidence || (item.matched ? "low" : "none");
+      return `
+    <div class="coverage-item conf-${conf}">
+      <span class="conf-badge conf-${conf}">${escapeHtml(item.confidenceLabel || conf)}</span>
+      <div class="coverage-item-body">
+        <span>${escapeHtml(item.text)}</span>
+        ${item.snippet ? `<p class="muted snippet">“${escapeHtml(item.snippet.slice(0, 140))}${item.snippet.length > 140 ? "…" : ""}”</p>` : ""}
+      </div>
+    </div>`;
+    })
     .join("");
   el.innerHTML = bar + summary + `<div class="coverage-items">${items}</div>`;
 }

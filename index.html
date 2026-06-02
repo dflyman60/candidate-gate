@@ -10,7 +10,7 @@
   <header class="app-header">
     <div>
       <h1>Candidate Gate</h1>
-      <p class="tagline">Local-first recruiting validation · MVP</p>
+      <p class="tagline">Recruiting validation · evidence-based screening</p>
     </div>
     <button type="button" class="secondary no-print" id="btn-evaluate-nav">Evaluate resume</button>
   </header>
@@ -71,7 +71,7 @@
         <button type="button" class="secondary" id="btn-back-library">← Library</button>
       </div>
       <h2>Evaluate candidate</h2>
-      <p class="muted">Select a requisition and drop a resume PDF to generate a scorecard.</p>
+      <p class="muted">Select a requisition and drop a resume PDF. Scores weight substantiated evidence—not keyword matches alone.</p>
 
       <label for="evaluate-requisition">Requisition</label>
       <select id="evaluate-requisition"></select>
@@ -105,20 +105,26 @@
           </div>
         </div>
 
+        <p class="score-disclaimer muted" id="score-disclaimer">Scores reflect evidence depth. Default path is verify in a live screen—not auto-submit.</p>
+
+        <h3>JD mirroring &amp; tailoring risk</h3>
+        <div id="mirroring-panel"></div>
+
         <h3>Must-have coverage</h3>
         <div id="must-coverage"></div>
 
         <h3>Preferred coverage</h3>
         <div id="pref-coverage"></div>
 
-        <h3>Deal-breaker risk flags</h3>
+        <h3>Deal-breaker &amp; consistency flags</h3>
         <div id="deal-risks"></div>
 
         <h3>Resume claim summary</h3>
         <ul id="claim-summary"></ul>
 
-        <h3>Suggested screening question</h3>
+        <h3>Screen kit — verification questions</h3>
         <p id="screening-question"></p>
+        <ol id="screen-kit-list"></ol>
       </div>
 
       <div class="toolbar no-print">
