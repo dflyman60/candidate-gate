@@ -363,7 +363,7 @@ function renderScorecard(req, sc) {
   badge.textContent = rec;
   badge.className = `rec-badge rec-${recClass(rec)}`;
 
-  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2.5`;
+  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2.6`;
 
   renderMirroring(sc.mirroring);
   renderCoverage("#must-coverage", sc.mustHaveCoverage, true);

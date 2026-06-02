@@ -59,7 +59,7 @@ export function scoreCandidate(resumeText, requisition, domainPack) {
   return {
     overall,
     recommendation,
-    scoringVersion: "2.5",
+    scoringVersion: "2.6",
     mustHaveCoverage: coverageSummary(mustResults, mustWeighted),
     preferredCoverage: coverageSummary(prefResults, prefWeighted),
     dealBreakerRisks: dealResults.filter((r) => r.risk),

@@ -62,16 +62,19 @@ export function findBestSnippet(resumeText, criterionText, domainPack) {
   const candidates = [];
 
   for (const sentence of sentences) {
-    const lower = sentence.toLowerCase();
+    const trimmed = sentence.trim();
+    const lower = trimmed.toLowerCase();
     const matchedTokens = keywords.filter((k) => tokenMatchInText(k, lower));
     if (matchedTokens.length === 0) continue;
+    const section = inferSection(resumeText, trimmed);
+    if (isDisallowedEvidenceBlock(trimmed, section)) continue;
+
     const score = matchedTokens.length / keywords.length;
-    const section = inferSection(resumeText, sentence);
-    const signals = detectEvidenceSignals(sentence, section);
-    const overlap = meaningfulOverlap(criterionText, sentence);
-    const phrase = phraseOverlapInSnippet(criterionText, sentence);
+    const signals = detectEvidenceSignals(trimmed, section);
+    const overlap = meaningfulOverlap(criterionText, trimmed);
+    const phrase = phraseOverlapInSnippet(criterionText, trimmed);
     candidates.push({
-      snippet: sentence.trim(),
+      snippet: trimmed,
       score,
       section,
       signals,
@@ -81,10 +84,16 @@ export function findBestSnippet(resumeText, criterionText, domainPack) {
     });
   }
 
+  const expLineCandidates = findExperienceSectionCandidates(resumeText, criterionText, domainPack);
+  for (const c of expLineCandidates) {
+    if (!candidates.some((x) => x.snippet === c.snippet)) candidates.push(c);
+  }
+
   if (!candidates.length) return null;
 
   const viable = candidates.filter((c) => passesMatchQuality(criterionText, c));
-  let pool = viable.filter((c) => {
+  let pool = viable.filter((c) => !isDisallowedEvidenceBlock(c.snippet, c.section));
+  pool = pool.filter((c) => {
     if (!requiresTechnicalAnchors(criterionText)) return true;
     if (!resumeMeetsTechnicalAnchors(criterionText, c.snippet)) return false;
     if (c.section === "experience") return true;
@@ -93,20 +102,35 @@ export function findBestSnippet(resumeText, criterionText, domainPack) {
 
   if (!pool.length) return null;
 
-  const expMatches = pool.filter((c) => c.section === "experience");
   const sortFn = (a, b) =>
     b.overlap - a.overlap ||
     (b.phrase ? 1 : 0) - (a.phrase ? 1 : 0) ||
     b.signals.length - a.signals.length ||
     b.score - a.score;
 
+  const expMatches = pool.filter((c) => c.section === "experience");
   if (expMatches.length) {
     expMatches.sort(sortFn);
     return expMatches[0];
   }
 
-  pool.sort(sortFn);
-  return pool[0];
+  const bodyMatches = pool.filter((c) => c.section === "body");
+  if (bodyMatches.length) {
+    bodyMatches.sort(sortFn);
+    return bodyMatches[0];
+  }
+
+  const summaryMatches = pool.filter(
+    (c) =>
+      c.section === "summary" &&
+      (c.phrase || c.overlap >= 0.45 || (c.overlap >= 0.34 && c.signals.length >= 1))
+  );
+  if (summaryMatches.length) {
+    summaryMatches.sort(sortFn);
+    return summaryMatches[0];
+  }
+
+  return null;
 }
 
 function passesMatchQuality(criterionText, candidate) {
@@ -199,7 +223,9 @@ export function assessCriterionEvidence(resumeText, criterionText, domainPack, j
   const matched = confidence !== "none";
   const legitimacy = analyzeLegitimacy(criterionText, snippet, section, signals, jdRaw, domainPack);
   const phraseOnResume = phrase || phraseOverlapInSnippet(criterionText, snippet);
-  const notStatedOnResume = legitimacy.tier === "not-on-resume";
+  const headerOnlyRejected = isDisallowedEvidenceBlock(snippet, section);
+  const notStatedOnResume =
+    legitimacy.tier === "not-on-resume" || headerOnlyRejected || section === "header";
 
   return {
     text: criterionText,
@@ -208,8 +234,8 @@ export function assessCriterionEvidence(resumeText, criterionText, domainPack, j
     confidenceLabel: notStatedOnResume
       ? "Not stated on resume"
       : confidenceLabel(confidence, section, snippet),
-    snippet: notStatedOnResume ? snippet : snippet,
-    incidentalSnippet: notStatedOnResume,
+    snippet: notStatedOnResume ? null : snippet,
+    incidentalSnippet: false,
     section,
     sectionLabel: sectionLabel(section, snippet),
     signals,
@@ -252,12 +278,77 @@ function scoreConfidence(section, signals, snippet) {
 }
 
 function isLikelyHeaderBlock(text) {
-  if (!text) return false;
-  if (/@\w+\.\w+/.test(text)) return true;
-  if (/\b\d{3}[-.\s)]?\s*\d{3}[-.\s]\d{4}\b/.test(text)) return true;
-  const head = text.slice(0, 100);
-  if (/(?:PROJECT\s+SCHEDULER|SCHEDULER|COST\s+ENGINEER)/i.test(head) && text.length < 350) return true;
+  return isContactHeavyBlock(text);
+}
+
+/** Contact/header blocks are never valid requirement evidence. */
+export function isDisallowedEvidenceBlock(snippet, section) {
+  if (!snippet) return true;
+  if (section === "header") return true;
+  if (isContactHeavyBlock(snippet)) return true;
   return false;
+}
+
+function isContactHeavyBlock(text) {
+  if (!text || text.length < 15) return false;
+  let score = 0;
+  if (/@|gmail\.|yahoo\.|outlook\.|hotmail\.|\.com\b/i.test(text)) score += 2;
+  if (/\b\d{3}[-.\s)]?\s*\d{3}[-.\s]\d{4}\b/.test(text)) score += 2;
+  if (/\b(?:TX|CA|NY|FL|VA|MD|GA|IL)\s+\d{5}\b/i.test(text)) score += 1;
+  if (/\bEducation\s*:/i.test(text) && (/@|\d{3}[-.\s)]?\s*\d{3}/.test(text))) return true;
+  if (/\bPMP\b|\bPE\b|\(US\s+CITIZEN\)/i.test(text) && score > 0) score += 1;
+  if (score >= 2) return true;
+  if (score >= 1 && text.length < 320 && !hasJobActionVerbs(text)) return true;
+  return false;
+}
+
+function hasJobActionVerbs(text) {
+  return /\b(?:managed|led|developed|created|built|updated|prepared|analyzed|coordinated|responsible|implemented|delivered|supported|performed|completed)\b/i.test(
+    text
+  );
+}
+
+function findExperienceSectionCandidates(resumeText, criterionText, domainPack) {
+  const keywords = expandSearchTerms(criterionText, domainPack);
+  const lines = resumeText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  let section = "header";
+  const out = [];
+
+  for (const line of lines) {
+    if (SUMMARY_SECTION_RE.test(line)) {
+      section = "summary";
+      continue;
+    }
+    if (SKILLS_SECTION_RE.test(line)) {
+      section = "skills";
+      continue;
+    }
+    if (/^(?:experience|employment|work\s*history|professional\s*experience)\s*:?\s*$/i.test(line)) {
+      section = "experience";
+      continue;
+    }
+    if (/^(?:education|certifications?|licenses?)\s*:?\s*$/i.test(line)) {
+      section = "education";
+      continue;
+    }
+    if (section !== "experience" || line.length < 20) continue;
+    if (isContactHeavyBlock(line)) continue;
+
+    const lower = line.toLowerCase();
+    const matchedTokens = keywords.filter((k) => tokenMatchInText(k, lower));
+    if (!matchedTokens.length) continue;
+
+    out.push({
+      snippet: line,
+      score: matchedTokens.length / keywords.length,
+      section: "experience",
+      signals: detectEvidenceSignals(line, "experience"),
+      matchedTokens,
+      overlap: meaningfulOverlap(criterionText, line),
+      phrase: phraseOverlapInSnippet(criterionText, line),
+    });
+  }
+  return out;
 }
 
 function detectEvidenceSignals(text, section = "") {
@@ -352,6 +443,16 @@ export function runConsistencyChecks(resumeText, mustResults, requisition) {
     });
   }
 
+  const notOnResume = mustResults.filter((r) => r.confidence === "none" || !r.snippet).length;
+  if (mustResults.length >= 3 && notOnResume >= Math.ceil(mustResults.length * 0.5)) {
+    flags.push({
+      severity: "medium",
+      title: "Requirements not evidenced in experience bullets",
+      detail:
+        "Many must-haves are not supported by job history text (contact/header/summary matches are ignored). Use the screen kit to verify claims live.",
+    });
+  }
+
   return flags;
 }
 
@@ -385,11 +486,11 @@ function buildVerificationQuestion(criterionText, snippet, legitimacy, meta = {}
 }
 
 function confidenceLabel(c, section, snippet) {
-  if (c === "low" && (section === "header" || section === "summary" || isLikelyHeaderBlock(snippet))) {
-    return "Low — header/summary claim";
-  }
   if (c === "low" && section === "skills") {
     return "Low — skills list only";
+  }
+  if (c === "low" && section === "summary" && !isContactHeavyBlock(snippet)) {
+    return "Low — summary only (verify in screen)";
   }
   return {
     high: "High — substantiated",
@@ -410,7 +511,26 @@ function sectionLabel(section, snippet) {
 function extractSentences(text) {
   const bullets = text.split(/\r?\n/).map((l) => l.replace(/^[-•*●▪◦]\s+/, "").trim()).filter((l) => l.length > 15);
   const sentences = text.split(/(?<=[.!?])\s+/).filter((s) => s.length > 15);
-  return [...new Set([...bullets, ...sentences])];
+  const merged = [...bullets, ...sentences];
+  const expanded = [];
+  for (const chunk of merged) {
+    if (chunk.length > 350) expanded.push(...splitMashedBlock(chunk));
+    else expanded.push(chunk);
+  }
+  return [...new Set(expanded)].filter((s) => s.length > 15 && !isContactHeavyBlock(s));
+}
+
+function splitMashedBlock(text) {
+  const parts = [];
+  const re = /(?:SUMMARY|EXPERIENCE|EMPLOYMENT|WORK\s*HISTORY|EDUCATION|SKILLS|CERTIFICATIONS?)\s*:?\s*/gi;
+  let last = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last + 20) parts.push(text.slice(last, m.index).trim());
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last).trim());
+  return parts.filter((p) => p.length > 20);
 }
 
 function expandSearchTerms(criterionText, domainPack) {
