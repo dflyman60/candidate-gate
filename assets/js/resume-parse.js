@@ -51,6 +51,8 @@ function normalizeResumeText(text) {
     .trim();
 }
 
+import { activeCriteria } from "./criteria.js";
+
 export function summarizeResumeClaims(resumeText, requisition, domainPack) {
   const lines = resumeText
     .split(/(?<=[.!?])\s+/)
@@ -60,8 +62,8 @@ export function summarizeResumeClaims(resumeText, requisition, domainPack) {
   const keywords = [
     ...(domainPack.keywordHints?.must || []),
     ...(domainPack.keywordHints?.preferred || []),
-    ...requisition.mustHaves.map((m) => m.text),
-    ...requisition.preferred.map((p) => p.text),
+    ...activeCriteria(requisition.mustHaves).map((m) => m.text),
+    ...activeCriteria(requisition.preferred).map((p) => p.text),
   ]
     .map((k) => k.toLowerCase())
     .filter((k, i, arr) => arr.indexOf(k) === i);

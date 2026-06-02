@@ -7,6 +7,7 @@ import {
   resumeMeetsTechnicalAnchors,
   criterionAnchorTokens,
 } from "./legitimacy-utils.js";
+import { activeCriteria } from "./criteria.js";
 
 const DATE_RE = /\b(?:19|20)\d{2}\s*[-–—]\s*(?:19|20)\d{2}\b|\b(?:19|20)\d{2}\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b/i;
 const YEARS_RE = /\b\d{1,2}\+?\s*(?:years?|yrs?)\b/i;
@@ -509,7 +510,7 @@ export function runConsistencyChecks(resumeText, mustResults, requisition) {
   const resume = resumeText.toLowerCase();
   const summaryZone = resumeText.slice(0, Math.min(800, resumeText.length)).toLowerCase();
 
-  const mustKeywords = requisition.mustHaves.flatMap((m) => significantTokens(m.text));
+  const mustKeywords = activeCriteria(requisition.mustHaves).flatMap((m) => significantTokens(m.text));
   if (mustKeywords.length) {
     const inSummary = mustKeywords.filter((k) => summaryZone.includes(k)).length;
     const ratio = inSummary / mustKeywords.length;

@@ -68,7 +68,12 @@ function readEmbeddedPacks() {
 }
 
 export function criteriaFromPack(pack, source = "pack") {
-  const mapItem = (text) => ({ id: crypto.randomUUID?.() || String(Date.now() + Math.random()), text, source });
+  const mapItem = (text) => ({
+    id: crypto.randomUUID?.() || String(Date.now() + Math.random()),
+    text,
+    source,
+    active: true,
+  });
   return {
     mustHaves: (pack.seedMustHaves || []).map(mapItem),
     preferred: (pack.seedPreferred || []).map(mapItem),

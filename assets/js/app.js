@@ -17,6 +17,14 @@ import {
   getTipDefinition,
 } from "./label-definitions.js";
 import { createPdfViewer } from "./resume-pdf-viewer.js";
+import {
+  normalizeCriterion,
+  normalizeCriteriaList,
+  activeCriteria,
+  sourceLabel,
+  sourceClass,
+} from "./criteria.js";
+import { buildExecutiveSummary, renderExecutiveSummaryHtml } from "./executive-summary.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -28,6 +36,7 @@ let currentPack = null;
 let editorDraft = null;
 let evaluateReqId = null;
 let lastScorecard = null;
+let lastScorecardReq = null;
 let resumeTextCache = "";
 let resumePdfBuffer = null;
 let resumeFileName = "";
@@ -73,6 +82,7 @@ function bindGlobal() {
   bindLabelTooltips();
   bindResumeWalkthrough();
   bindResumeZoomControls();
+  bindExecutiveOverviewModal();
 }
 
 function showView(name) {
@@ -94,6 +104,9 @@ async function openEditor(reqId) {
       currentPack = await loadDomainPack(req.domainPackId);
     }
     editorDraft = JSON.parse(JSON.stringify(req));
+    editorDraft.mustHaves = normalizeCriteriaList(editorDraft.mustHaves);
+    editorDraft.preferred = normalizeCriteriaList(editorDraft.preferred);
+    editorDraft.dealBreakers = normalizeCriteriaList(editorDraft.dealBreakers);
   } else {
     const seeds = criteriaFromPack(currentPack, "pack");
     editorDraft = {
@@ -130,11 +143,14 @@ function renderCriteriaList(kind, items, container) {
   if (!container) return;
   container.innerHTML = "";
   items.forEach((item, index) => {
+    const c = normalizeCriterion(item);
+    const active = c.active;
     const row = document.createElement("div");
-    row.className = "criteria-row";
+    row.className = `criteria-row${active ? "" : " criteria-row--inactive"}`;
     row.innerHTML = `
-      <input type="text" value="${escapeAttr(item.text)}" data-kind="${kind}" data-index="${index}" aria-label="Criterion" />
-      <button type="button" class="icon-btn" data-remove="${kind}" data-index="${index}" title="Remove">×</button>
+      <span class="criteria-source ${sourceClass(c.source)}" title="${escapeAttr(sourceLabel(c.source))}">${escapeHtml(sourceLabel(c.source))}</span>
+      <input type="text" value="${escapeAttr(c.text)}" data-kind="${kind}" data-index="${index}" aria-label="Criterion" ${active ? "" : 'aria-disabled="true"'} />
+      <button type="button" class="criteria-toggle" data-toggle-active="${kind}" data-index="${index}" aria-pressed="${active ? "true" : "false"}" title="${active ? "Active — included in scoring" : "Inactive — excluded from scoring"}">${active ? "On" : "Off"}</button>
     `;
     container.appendChild(row);
   });
@@ -142,15 +158,22 @@ function renderCriteriaList(kind, items, container) {
   container.querySelectorAll("input").forEach((input) => {
     input.addEventListener("change", () => syncCriteriaFromDom());
   });
-  container.querySelectorAll("[data-remove]").forEach((btn) => {
+  container.querySelectorAll("[data-toggle-active]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const kind = btn.dataset.remove;
+      const kind = btn.dataset.toggleActive;
       const index = Number(btn.dataset.index);
-      const key = kindKey(kind);
-      editorDraft[key].splice(index, 1);
-      renderEditor();
+      toggleCriterionActive(kind, index);
     });
   });
+}
+
+function toggleCriterionActive(kind, index) {
+  syncCriteriaFromDom();
+  const key = kindKey(kind);
+  const item = editorDraft[key][index];
+  if (!item) return;
+  item.active = item.active === false;
+  renderEditor();
 }
 
 function kindKey(kind) {
@@ -164,18 +187,24 @@ function syncCriteriaFromDom() {
     const key = kindKey(kind);
     const container = $(`#list-${kind === "deal" ? "deal" : kind}`);
     const inputs = container?.querySelectorAll("input") || [];
-    editorDraft[key] = [...inputs].map((input, i) => ({
-      id: editorDraft[key][i]?.id || uuid(),
-      text: input.value.trim(),
-      source: editorDraft[key][i]?.source || "manual",
-    })).filter((x) => x.text);
+    const rows = container?.querySelectorAll(".criteria-row") || [];
+    editorDraft[key] = [...rows].map((row, i) => {
+      const input = row.querySelector("input");
+      const toggle = row.querySelector("[data-toggle-active]");
+      return normalizeCriterion({
+        id: editorDraft[key][i]?.id || uuid(),
+        text: input?.value?.trim() || "",
+        source: editorDraft[key][i]?.source || "manual",
+        active: toggle?.getAttribute("aria-pressed") !== "false",
+      });
+    }).filter((x) => x.text);
   });
 }
 
 function addCriterion(kind) {
   syncCriteriaFromDom();
   const key = kindKey(kind);
-  editorDraft[key].push({ id: uuid(), text: "", source: "manual" });
+  editorDraft[key].push({ id: uuid(), text: "", source: "manual", active: true });
   renderEditor();
   const container = $(`#list-${kind === "deal" ? "deal" : kind}`);
   const last = container?.querySelector(".criteria-row:last-child input");
@@ -211,6 +240,9 @@ async function runExtract() {
 
 function saveEditor() {
   syncCriteriaFromDom();
+  editorDraft.mustHaves = normalizeCriteriaList(editorDraft.mustHaves);
+  editorDraft.preferred = normalizeCriteriaList(editorDraft.preferred);
+  editorDraft.dealBreakers = normalizeCriteriaList(editorDraft.dealBreakers);
   editorDraft.title = $("#req-title")?.value?.trim() || "Untitled requisition";
   editorDraft.jdRaw = $("#req-jd")?.value?.trim() || "";
   editorDraft.updatedAt = new Date().toISOString();
@@ -244,7 +276,7 @@ function renderLibrary() {
     <article class="req-card" data-id="${r.id}">
       <div class="req-card-main">
         <h3>${escapeHtml(r.title)}</h3>
-        <p class="muted">${escapeHtml(r.domainPackId || "project-controls")} · ${r.mustHaves?.length || 0} must · ${formatDate(r.updatedAt)}</p>
+        <p class="muted">${escapeHtml(r.domainPackId || "project-controls")} · ${activeCriteria(r.mustHaves).length}/${(r.mustHaves || []).filter((m) => m.text).length} must active · ${formatDate(r.updatedAt)}</p>
       </div>
       <div class="req-card-actions">
         <button type="button" class="secondary" data-edit="${r.id}">Edit</button>
@@ -310,6 +342,7 @@ function resetDropZone() {
   pdfViewerInstance?.destroy?.();
   pdfViewerInstance = null;
   lastScorecard = null;
+  lastScorecardReq = null;
   const preview = $("#resume-preview");
   if (preview) preview.textContent = "";
   const status = $("#drop-status");
@@ -375,8 +408,42 @@ async function runScore() {
   }
   const pack = await loadDomainPack(req.domainPackId || manifest.defaultPackId);
   lastScorecard = scoreCandidate(resumeTextCache, req, pack);
+  lastScorecardReq = req;
   showView("scorecard");
   renderScorecard(req, lastScorecard);
+}
+
+function bindExecutiveOverviewModal() {
+  const modal = $("#exec-modal");
+  const body = $("#exec-modal-body");
+  if (!modal || !body) return;
+
+  const close = () => {
+    modal.hidden = true;
+    modal.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("exec-modal-open");
+  };
+
+  const open = () => {
+    if (!lastScorecard || !lastScorecardReq) {
+      alert("Generate a scorecard first.");
+      return;
+    }
+    const summary = buildExecutiveSummary(lastScorecardReq, lastScorecard);
+    body.innerHTML = renderExecutiveSummaryHtml(summary);
+    modal.hidden = false;
+    modal.setAttribute("aria-hidden", "false");
+    document.body.classList.add("exec-modal-open");
+    modal.querySelector(".exec-modal-close")?.focus();
+  };
+
+  $("#btn-executive-overview")?.addEventListener("click", open);
+  modal.querySelectorAll("[data-exec-close]").forEach((el) => {
+    el.addEventListener("click", close);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !modal.hidden) close();
+  });
 }
 
 function renderScorecard(req, sc) {
@@ -389,9 +456,11 @@ function renderScorecard(req, sc) {
     badge.innerHTML = renderTipBadge(rec, rec, `rec-badge rec-${recClass(rec)}`);
   }
 
-  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2.7`;
+  $("#score-meta").textContent = `${req.title} · scored ${formatDate(sc.scoredAt)} · evidence-based v2.9`;
 
   renderMirroring(sc.mirroring);
+  renderAiWriting(sc.aiWriting);
+
   renderCoverage("#must-coverage", sc.mustHaveCoverage, true);
   renderCoverage("#pref-coverage", sc.preferredCoverage, false);
   renderFlags(sc);
@@ -449,7 +518,7 @@ function renderScorecard(req, sc) {
 function renderMatchedPhraseRow(p) {
   const label = typeof p === "string" ? p : p.text;
   const near = typeof p === "string" ? p.includes("(near match)") : p.nearMatch;
-  const n = typeof p === "string" ? 1 : p.occurrences || 1;
+  const n = typeof p === "string" ? 1 : Math.max(1, p.occurrences ?? 1);
   const suffix = near ? " (near match)" : "";
   const occLabel = `${n} occurrence${n === 1 ? "" : "s"} on resume`;
   return `<li><span class="mirror-phrase-text">${escapeHtml(label)}${suffix ? `<span class="muted">${suffix}</span>` : ""}</span> <span class="phrase-occ-count">${escapeHtml(occLabel)}</span></li>`;
@@ -470,7 +539,7 @@ function renderMirroring(mirroring) {
       )}
       <span class="muted"> · ${mirroring.similarityPercent ?? 0}% JD token overlap</span>
       ${mirroring.matchedPhraseCount
-        ? `<span class="muted"> · ${mirroring.matchedPhraseCount} phrase${mirroring.matchedPhraseCount === 1 ? "" : "s"}, ${mirroring.totalPhraseOccurrences ?? 0} occurrence${(mirroring.totalPhraseOccurrences ?? 0) === 1 ? "" : "s"}</span>`
+        ? `<span class="muted"> · ${mirroring.matchedPhraseCount} of ${mirroring.jdPhrasesScanned ?? mirroring.matchedPhraseCount} JD phrases matched, ${mirroring.totalPhraseOccurrences ?? 0} occurrence${(mirroring.totalPhraseOccurrences ?? 0) === 1 ? "" : "s"}</span>`
         : ""}
     </div>`;
 
@@ -488,15 +557,56 @@ function renderMirroring(mirroring) {
 
   if (mirroring.matchedPhrases?.length) {
     const shown = mirroring.matchedPhrases.length;
-    const total = mirroring.matchedPhraseCount ?? shown;
-    const occ = mirroring.totalPhraseOccurrences ?? mirroring.matchedPhrases.reduce((s, p) => s + (p.occurrences || 1), 0);
+    const matched = mirroring.matchedPhraseCount ?? shown;
+    const scanned = mirroring.jdPhrasesScanned ?? matched;
+    const occ =
+      mirroring.totalPhraseOccurrences ??
+      mirroring.matchedPhrases.reduce((s, p) => s + (p.occurrences ?? 0), 0);
     const summaryLabel =
-      total > shown
-        ? `Matched JD phrases (${shown} of ${total} · ${occ} occurrences on resume)`
-        : `Matched JD phrases (${total} · ${occ} occurrence${occ === 1 ? "" : "s"} on resume)`;
+      matched > shown
+        ? `Matched JD phrases (${shown} shown · ${matched} of ${scanned} matched · ${occ} occurrence${occ === 1 ? "" : "s"} on resume)`
+        : `Matched JD phrases (${matched} of ${scanned} matched · ${occ} occurrence${occ === 1 ? "" : "s"} on resume)`;
     html += `<details class="mirror-phrases"><summary>${escapeHtml(summaryLabel)}</summary><ul>`;
     html += mirroring.matchedPhrases.map((p) => renderMatchedPhraseRow(p)).join("");
     html += `</ul></details>`;
+  }
+
+  el.innerHTML = html;
+}
+
+function renderAiWriting(ai) {
+  const el = $("#ai-writing-panel");
+  if (!el) return;
+  if (!ai) {
+    el.innerHTML = `<p class="muted">No analysis available.</p>`;
+    return;
+  }
+
+  const riskClass = `ai-risk-${ai.riskLevel || "none"}`;
+  let html = `
+    <div class="ai-writing-summary ${riskClass}">
+      <span class="ai-likelihood-badge">AI-style likelihood: <strong>${ai.aiLikelihood ?? 0}%</strong></span>
+      <span class="muted"> · Human-specific detail score: <strong>${ai.humanLikelihood ?? 0}%</strong></span>
+    </div>
+    <p class="muted ai-writing-summary-text">${escapeHtml(ai.summary || "")}</p>
+    ${ai.methodNote ? `<p class="muted ai-method-note">${escapeHtml(ai.methodNote)}</p>` : ""}
+  `;
+
+  if (ai.signals?.length) {
+    html += `<ul class="ai-signal-list">`;
+    html += ai.signals
+      .map(
+        (s) => `
+      <li class="ai-signal ai-signal--${s.status}">
+        <span class="ai-signal-status">${s.status === "flag" ? "⚠" : s.status === "warn" ? "◐" : "✓"}</span>
+        <div>
+          <strong>${escapeHtml(s.label)}</strong>
+          <span class="muted">${escapeHtml(s.detail)}</span>
+        </div>
+      </li>`
+      )
+      .join("");
+    html += `</ul>`;
   }
 
   el.innerHTML = html;

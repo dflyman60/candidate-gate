@@ -45,6 +45,8 @@
         <button type="button" class="secondary" id="btn-extract-jd">Extract criteria from JD</button>
       </div>
 
+      <p class="criteria-legend muted">Each row is labeled <strong>Preload</strong> (domain pack), <strong>From JD</strong> (extract), or <strong>Manual</strong>. Use <strong>On/Off</strong> to include or exclude from scoring without deleting.</p>
+
       <div class="criteria-section">
         <h3>Must-haves</h3>
         <div id="list-must"></div>
@@ -106,12 +108,19 @@
             <div class="muted">Recommendation</div>
             <span class="rec-badge" id="score-recommendation">—</span>
           </div>
+          <div class="score-hero-actions no-print">
+            <button type="button" class="secondary" id="btn-executive-overview">Executive overview</button>
+          </div>
         </div>
 
         <p class="score-disclaimer muted" id="score-disclaimer">Evidence must come from experience or job bullets—not contact info, email, or phone blocks. If not stated on resume, use the screen kit. <span class="tip-hint">Click a requirement row — a red ✓ on the resume marks where that evidence starts (full phrase highlight is parked). Click badges (ⓘ) for definitions.</span></p>
 
         <h3>JD mirroring &amp; tailoring risk</h3>
         <div id="mirroring-panel"></div>
+
+        <h3>AI-assisted writing signals</h3>
+        <p class="muted ai-writing-intro">Rule-based scan for ChatGPT-style footprints (dense summary, template bullets, duplicate skills, JD terms in skills but not experience)—not the same as Google/Gemini AI probability. Use with a live screen.</p>
+        <div id="ai-writing-panel"></div>
 
         <h3>Must-have coverage</h3>
         <div id="must-coverage"></div>
@@ -157,9 +166,17 @@
     </section>
   </main>
 
+  <div id="exec-modal" class="exec-modal" hidden aria-hidden="true">
+    <div class="exec-modal-backdrop" data-exec-close tabindex="-1"></div>
+    <div class="exec-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="exec-modal-title">
+      <button type="button" class="exec-modal-close" data-exec-close aria-label="Close overview">×</button>
+      <div class="exec-modal-body" id="exec-modal-body"></div>
+    </div>
+  </div>
+
   <script type="application/json" id="cg-embedded-manifest">{"version":1,"defaultPackId":"project-controls","packs":[{"id":"project-controls","title":"Project Controls & Scheduling","description":"Schedulers, planners, cost engineers, project controls","packFile":"domain-packs/project-controls.json"}]}</script>
   <script type="application/json" id="cg-embedded-packs">{"project-controls":{"packId":"project-controls","title":"Project Controls & Scheduling","description":"Schedulers, planners, cost engineers, project controls","seedMustHaves":["Primavera P6 or MS Project scheduling experience","Critical path method (CPM) scheduling","Schedule baseline and progress update experience","Ability to read and interpret construction/engineering drawings at a coordination level"],"seedPreferred":["Earned value management (EVM / EVMS)","MSP (Microsoft Project Server) or portfolio scheduling","Cost engineering or cost reporting support","EPC, data center, nuclear, or industrial project background","Recovery schedule development","Delay analysis or time impact analysis exposure"],"seedDealBreakers":["No scheduling software experience (P6, MSP, or MS Project)","Unable to meet on-site or client location requirements if stated in JD","No verifiable project scheduling or controls role history"],"keywordHints":{"must":["primavera","p6","ms project","microsoft project","cpm","critical path","scheduler","scheduling","baseline","update schedule","project controls","cost engineer","cost engineering"],"preferred":["evms","evm","earned value","msp","recovery schedule","delay analysis","tia","epc","data center","nuclear","wbs","resource loading","lookahead","4d","5d"],"dealBreaker":["no experience","without","disqualif","must not","unable to"]},"jdSectionLabels":{"must":["required","requirements","must have","must-have","minimum qualifications","minimum requirements","qualifications","essential","mandatory"],"preferred":["preferred","nice to have","nice-to-have","desired","pluses","bonus","ideal"],"dealBreaker":["deal breaker","deal-breaker","disqualif","will not consider","not eligible"]}}}</script>
 
-  <script type="module" src="assets/js/app.js?v=marker3"></script>
+  <script type="module" src="assets/js/app.js?v=ai2"></script>
 </body>
 </html>

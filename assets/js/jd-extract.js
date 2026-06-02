@@ -71,9 +71,9 @@ export function extractFromJd(jdText, domainPack) {
   }
 
   return {
-    mustHaves: mustHaves.map((text) => ({ text, source: "jd" })),
-    preferred: preferred.map((text) => ({ text, source: "jd" })),
-    dealBreakers: dealBreakers.map((text) => ({ text, source: "jd" })),
+    mustHaves: mustHaves.map((text) => ({ text, source: "jd", active: true })),
+    preferred: preferred.map((text) => ({ text, source: "jd", active: true })),
+    dealBreakers: dealBreakers.map((text) => ({ text, source: "jd", active: true })),
   };
 }
 
@@ -112,6 +112,7 @@ export function mergeCriteria(existing, extracted, packSeeds) {
       id: item.id || crypto.randomUUID?.() || String(Date.now() + Math.random()),
       text: item.text,
       source: item.source || "manual",
+      active: item.active !== false,
     }));
 
   const combined = {

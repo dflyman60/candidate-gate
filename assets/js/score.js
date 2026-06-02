@@ -8,19 +8,26 @@ import {
   annotateSnippetGroups,
 } from "./evidence.js";
 import { analyzeJdMirroring, mirroringPenalty } from "./mirroring.js";
+import { analyzeAiWritingSignals, aiWritingPenalty } from "./ai-writing-signals.js";
 import { legitimacyWeight } from "./legitimacy.js";
+import { activeCriteria } from "./criteria.js";
 
 export function scoreCandidate(resumeText, requisition, domainPack) {
   const jdRaw = requisition.jdRaw || "";
-  const mustResults = assessCriteriaBatch(resumeText, requisition.mustHaves, domainPack, jdRaw);
-  const prefResults = assessCriteriaBatch(resumeText, requisition.preferred, domainPack, jdRaw);
-  const dealResults = requisition.dealBreakers.map((c) =>
+  const mustActive = activeCriteria(requisition.mustHaves);
+  const prefActive = activeCriteria(requisition.preferred);
+  const dealActive = activeCriteria(requisition.dealBreakers);
+  const mustResults = assessCriteriaBatch(resumeText, mustActive, domainPack, jdRaw);
+  const prefResults = assessCriteriaBatch(resumeText, prefActive, domainPack, jdRaw);
+  const dealResults = dealActive.map((c) =>
     assessDealBreaker(resumeText, c.text, domainPack, mustResults)
   );
 
   const mirroring = analyzeJdMirroring(resumeText, requisition);
+  const aiWriting = analyzeAiWritingSignals(resumeText, requisition);
   let consistencyFlags = runConsistencyChecks(resumeText, mustResults, requisition);
   consistencyFlags = appendMirroredFlags(consistencyFlags, mustResults);
+  consistencyFlags = [...consistencyFlags, ...aiWriting.flags];
 
   const mustWeighted = weightedCoverage(mustResults);
   const prefWeighted = weightedCoverage(prefResults);
@@ -37,9 +44,17 @@ export function scoreCandidate(resumeText, requisition, domainPack) {
     ...dealResults.filter((r) => r.risk),
     ...consistencyFlags.filter((f) => f.severity === "high" || f.severity === "medium"),
     ...mirroring.flags.filter((f) => f.severity === "high"),
+    ...aiWriting.flags.filter((f) => f.severity === "high"),
   ];
 
-  const overall = computeOverall(mustWeighted, prefWeighted, mirroring.riskLevel, dealRisks.length, mustResults);
+  const overall = computeOverall(
+    mustWeighted,
+    prefWeighted,
+    mirroring.riskLevel,
+    dealRisks.length,
+    mustResults,
+    aiWriting.riskLevel
+  );
   const recommendation = recommend({
     overall,
     mustPct,
@@ -48,21 +63,23 @@ export function scoreCandidate(resumeText, requisition, domainPack) {
     mustLow,
     mustTotal,
     mirroring,
+    aiWriting,
     dealRisks,
     mustResults,
   });
 
-  const screenKit = buildScreenKit(mustResults, prefResults, mirroring);
+  const screenKit = buildScreenKit(mustResults, prefResults, mirroring, aiWriting);
 
   return {
     overall,
     recommendation,
-    scoringVersion: "2.7",
+    scoringVersion: "2.9",
     mustHaveCoverage: coverageSummary(mustResults, mustWeighted),
     preferredCoverage: coverageSummary(prefResults, prefWeighted),
     dealBreakerRisks: dealResults.filter((r) => r.risk),
     consistencyFlags,
     mirroring,
+    aiWriting,
     resumeClaimSummary: summarizeResumeClaims(resumeText, requisition, domainPack),
     suggestedScreeningQuestion: screenKit.primaryQuestion,
     screenKit,
@@ -121,15 +138,16 @@ function coverageSummary(results, weighted) {
   };
 }
 
-function computeOverall(mustWeighted, prefWeighted, mirroringRisk, dealRiskCount, mustResults) {
+function computeOverall(mustWeighted, prefWeighted, mirroringRisk, dealRiskCount, mustResults, aiWritingRisk = "none") {
   const mustWeight = 0.65;
   const prefWeight = 0.2;
   const raw = mustWeighted * 100 * mustWeight + prefWeighted * 100 * prefWeight;
   const mirrorPen = mirroringPenalty(mirroringRisk);
+  const aiPen = aiWritingPenalty(aiWritingRisk);
   const dealPen = Math.min(25, dealRiskCount * 6);
   const weakOnly = mustResults.every((r) => !r.matched || r.confidence === "low");
   const weakPen = weakOnly && mustResults.some((r) => r.matched) ? 15 : 0;
-  return Math.max(0, Math.min(100, Math.round(raw - mirrorPen - dealPen - weakPen)));
+  return Math.max(0, Math.min(100, Math.round(raw - mirrorPen - aiPen - dealPen - weakPen)));
 }
 
 function recommend(ctx) {
@@ -140,6 +158,7 @@ function recommend(ctx) {
     mustMedium,
     mustTotal,
     mirroring,
+    aiWriting,
     dealRisks,
     mustResults,
   } = ctx;
@@ -147,11 +166,12 @@ function recommend(ctx) {
   const substantiatedRatio = mustTotal ? mustHigh / mustTotal : 0;
   const highMirror = mirroring.riskLevel === "high";
   const mediumMirror = mirroring.riskLevel === "medium";
+  const highAiStyle = aiWriting?.riskLevel === "high";
 
   const mirroredCount = mustResults.filter((r) => r.legitimacy?.tier === "likely-mirrored").length;
   const supportedCount = mustResults.filter((r) => r.legitimacy?.tier === "supported").length;
 
-  if (highMirror && substantiatedRatio < 0.5) return "Do Not Submit";
+  if ((highMirror || highAiStyle) && substantiatedRatio < 0.5) return "Do Not Submit";
   if (mirroredCount >= Math.ceil(mustTotal * 0.5) && supportedCount === 0) return "Do Not Submit";
   if (mustPct < 35 && mustHigh === 0) return "Do Not Submit";
   if (dealRisks.length >= 3 && mustHigh < 2) return "Do Not Submit";
@@ -166,14 +186,14 @@ function recommend(ctx) {
     return "Submit";
   }
 
-  if (mustResults.some((r) => r.matched) || mediumMirror || mustMedium > 0) {
+  if (mustResults.some((r) => r.matched) || mediumMirror || highAiStyle || aiWriting?.riskLevel === "medium" || mustMedium > 0) {
     return "Verify Further";
   }
 
   return "Do Not Submit";
 }
 
-function buildScreenKit(mustResults, prefResults, mirroring) {
+function buildScreenKit(mustResults, prefResults, mirroring, aiWriting) {
   const priority = [
     ...mustResults.filter((r) => r.legitimacy?.tier === "likely-mirrored"),
     ...mustResults.filter((r) => r.legitimacy?.tier === "self-reported"),
@@ -198,7 +218,10 @@ function buildScreenKit(mustResults, prefResults, mirroring) {
   }));
 
   let primaryQuestion = questions[0]?.question;
-  if (mirroring.riskLevel === "high" || mirroring.riskLevel === "medium") {
+  if (aiWriting?.riskLevel === "high") {
+    primaryQuestion =
+      "This resume reads like polished AI or template language. Pick your most complex project from the last 3 years: employer, contract type, dates, team size, tools, one metric you personally owned, and what went wrong once—without reading the resume.";
+  } else if (mirroring.riskLevel === "high" || mirroring.riskLevel === "medium") {
     primaryQuestion =
       "This resume closely tracks the job posting language. Pick one project from the last 3 years and walk me through scope, your employer, dates, schedule size, software used, and one deliverable you personally produced—without reading from the resume.";
   } else if (!primaryQuestion) {
