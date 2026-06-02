@@ -27,12 +27,21 @@ Do not open `index.html` via `file://` — PDF.js and pack JSON need HTTP.
 - Packs: `data/domain-packs/*.json`
 - MVP ships **project-controls** only; add packs (e.g. landscaping) by adding JSON + a manifest entry.
 
-## Deploy (GitHub Pages)
+## Deploy (Vercel — recommended)
 
-1. Create repo `candidate-gate` on GitHub.
-2. Push this project to `main`.
-3. Settings → Pages → Deploy from branch `main`, folder `/ (root)`.
-4. Live at: `https://<user>.github.io/candidate-gate/`
+1. Create an empty GitHub repo named `candidate-gate` (no README/license).
+2. Push this project:
+
+   ```bash
+   git remote add origin https://github.com/dflyman60/candidate-gate.git
+   git push -u origin main
+   ```
+
+3. [vercel.com](https://vercel.com) → **Add New Project** → import `candidate-gate`.
+4. Framework preset: **Other**. Root directory: `./`. Build command: *(leave empty)*. Output: *(leave empty / root)*.
+5. Deploy. Your app will be at `https://candidate-gate.vercel.app` (or the URL Vercel assigns).
+
+Optional: add a custom subdomain under your domain in Vercel → Project → Settings → Domains.
 
 ## Data privacy
 
